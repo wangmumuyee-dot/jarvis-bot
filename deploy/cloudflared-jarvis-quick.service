@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflared Quick Tunnel for Jarvis Bot
+After=network-online.target jarvis-bot.service
+Wants=network-online.target
+Requires=jarvis-bot.service
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+ExecStart=/usr/bin/env cloudflared tunnel --url http://127.0.0.1:8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

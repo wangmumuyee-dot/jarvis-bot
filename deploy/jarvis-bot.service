@@ -1,0 +1,17 @@
+[Unit]
+Description=Personal Jarvis Feishu Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+WorkingDirectory=/opt/jarvis-bot
+EnvironmentFile=/opt/jarvis-bot/.env
+ExecStart=/opt/jarvis-bot/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
