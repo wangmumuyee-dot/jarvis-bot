@@ -112,13 +112,17 @@ def _parse_base_date(text: str, now: datetime) -> datetime | None:
 
 
 def _parse_relative_time(text: str, now: datetime) -> datetime | None:
-    match = re.search(r"(\d+)\s*分钟(?:后|之后)", text)
+    match = re.search(r"([零一二两三四五六七八九十百\d]+)\s*分钟(?:后|之后)", text)
     if match:
-        return (now + timedelta(minutes=int(match.group(1)))).replace(second=0, microsecond=0)
+        minutes = _parse_duration_number(match.group(1))
+        if minutes is not None:
+            return (now + timedelta(minutes=minutes)).replace(second=0, microsecond=0)
 
-    match = re.search(r"(\d+)\s*小时(?:后|之后)", text)
+    match = re.search(r"([零一二两三四五六七八九十百\d]+)\s*小时(?:后|之后)", text)
     if match:
-        return (now + timedelta(hours=int(match.group(1)))).replace(second=0, microsecond=0)
+        hours = _parse_duration_number(match.group(1))
+        if hours is not None:
+            return (now + timedelta(hours=hours)).replace(second=0, microsecond=0)
 
     return None
 
@@ -148,3 +152,35 @@ def _normalize_hour(hour: int, text: str) -> int:
 
 def _split_hhmm(value: str) -> tuple[int, int]:
     return int(value[:2]), int(value[2:])
+
+
+def _parse_duration_number(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+
+    digits = {
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if value in digits:
+        return digits[value]
+    if value == "十":
+        return 10
+    if value.startswith("十"):
+        tail = value[1:]
+        return 10 + digits.get(tail, 0) if tail in digits else None
+    if "十" in value:
+        head, tail = value.split("十", 1)
+        if head not in digits:
+            return None
+        return digits[head] * 10 + (digits.get(tail, 0) if tail else 0)
+    return None
