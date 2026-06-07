@@ -112,11 +112,11 @@ def _parse_base_date(text: str, now: datetime) -> datetime | None:
 
 
 def _parse_relative_time(text: str, now: datetime) -> datetime | None:
-    match = re.search(r"(\d+)\s*分钟后", text)
+    match = re.search(r"(\d+)\s*分钟(?:后|之后)", text)
     if match:
         return (now + timedelta(minutes=int(match.group(1)))).replace(second=0, microsecond=0)
 
-    match = re.search(r"(\d+)\s*小时后", text)
+    match = re.search(r"(\d+)\s*小时(?:后|之后)", text)
     if match:
         return (now + timedelta(hours=int(match.group(1)))).replace(second=0, microsecond=0)
 

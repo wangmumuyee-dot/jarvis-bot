@@ -46,6 +46,17 @@ class TodoServiceTest(unittest.TestCase):
         self.assertEqual(created.draft.title, "喝水")
         self.assertEqual(created.draft.due_at, datetime(2026, 6, 3, 10, 5, 0))
 
+    def test_create_relative_reminder_with_zhihou(self) -> None:
+        created = self.service.create_from_text(
+            "1分钟之后提醒我看下排骨",
+            context=TodoContext(feishu_open_id="ou_test"),
+            now=datetime(2026, 6, 3, 10, 0, 30),
+        )
+        assert created is not None
+        self.assertEqual(created.draft.title, "看下排骨")
+        self.assertEqual(created.draft.due_at, datetime(2026, 6, 3, 10, 1, 0))
+        self.assertIsNotNone(created.reminder_id)
+
     def test_complete_todo(self) -> None:
         self.service.create_from_text("记一下：买空气炸锅")
         reply = handle_todo_text("完成买空气炸锅", self.service)

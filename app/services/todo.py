@@ -406,7 +406,7 @@ def _extract_title(text: str) -> str:
         title = title.replace(token, " ")
     title = __import__("re").sub(r"\d{1,2}[:：]\d{1,2}", " ", title)
     title = __import__("re").sub(r"\d{1,2}\s*点(?:半|\d{1,2}\s*分?)?", " ", title)
-    title = __import__("re").sub(r"\d+\s*(?:分钟|小时)后", " ", title)
+    title = __import__("re").sub(r"\d+\s*(?:分钟|小时)(?:后|之后)", " ", title)
     return " ".join(title.strip(" ：:，,。").split())
 
 
