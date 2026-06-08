@@ -5,6 +5,8 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+from openpyxl import Workbook, load_workbook
+
 from app.ai.summarize import SummaryService, summarize_locally
 import app.services.knowledge as knowledge_module
 from app.services.export import LedgerExportService, handle_export_text, verify_xlsx
@@ -89,6 +91,28 @@ class LinkAndExportTest(unittest.TestCase):
         files = list((self.root / "exports").glob("*.xlsx"))
         self.assertEqual(len(files), 1)
         self.assertTrue(verify_xlsx(files[0]))
+        workbook = load_workbook(files[0])
+        headers = [cell.value for cell in workbook.active[1]]
+        self.assertIn("账本", headers)
+        self.assertIn("账户", headers)
+        self.assertIn("标签", headers)
+
+    def test_import_ledger_xlsx(self) -> None:
+        path = self.root / "import.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["账本", "账户", "金额", "分类", "备注", "标签"])
+        sheet.append(["旅行账本", "招行信用卡", 88, "餐饮", "午饭", "出差"])
+        workbook.save(path)
+
+        export_service = LedgerExportService(self.db, self.root / "exports")
+        result = export_service.import_xlsx(path, now=datetime(2026, 6, 8, 12, 0, 0))
+        self.assertEqual(result.row_count, 1)
+
+        ledger = LedgerService(self.db)
+        query = ledger.query("这个月餐饮花了多少", now=datetime(2026, 6, 8, 12, 0, 0))
+        assert query is not None
+        self.assertEqual(query.total, 88)
 
 
 if __name__ == "__main__":

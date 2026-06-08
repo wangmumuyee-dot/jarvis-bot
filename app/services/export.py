@@ -9,7 +9,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from app.storage.db import Database
-from app.services.ledger import _type_label
+from app.services.ledger import LedgerService, parse_ledger_text, _type_label
 
 ExportScope = Literal["all", "month", "reimbursable"]
 
@@ -19,6 +19,12 @@ class ExportResult:
     path: Path
     row_count: int
     scope: ExportScope
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    path: Path
+    row_count: int
 
 
 class LedgerExportService:
@@ -49,12 +55,28 @@ class LedgerExportService:
             records = conn.execute(
                 f"""
                 SELECT
-                    id, entry_type, amount, currency, category, note,
-                    occurred_at, reimbursable, reimbursement_status,
-                    source_text, created_at
+                    ledger_entries.id,
+                    ledger_entries.entry_type,
+                    ledger_entries.amount,
+                    ledger_entries.currency,
+                    ledger_entries.category,
+                    ledger_entries.note,
+                    ledger_entries.occurred_at,
+                    ledger_entries.reimbursable,
+                    ledger_entries.reimbursement_status,
+                    ledger_entries.source_text,
+                    ledger_entries.created_at,
+                    COALESCE(ledger_books.name, '日常账本') AS book,
+                    COALESCE(ledger_accounts.name, '默认账户') AS account,
+                    GROUP_CONCAT(ledger_tags.name, ',') AS tags
                 FROM ledger_entries
+                LEFT JOIN ledger_books ON ledger_books.id = ledger_entries.book_id
+                LEFT JOIN ledger_accounts ON ledger_accounts.id = ledger_entries.account_id
+                LEFT JOIN ledger_entry_tags ON ledger_entry_tags.entry_id = ledger_entries.id
+                LEFT JOIN ledger_tags ON ledger_tags.id = ledger_entry_tags.tag_id
                 {where}
-                ORDER BY occurred_at DESC, id DESC
+                GROUP BY ledger_entries.id
+                ORDER BY ledger_entries.occurred_at DESC, ledger_entries.id DESC
                 """,
                 params,
             ).fetchall()
@@ -66,11 +88,14 @@ class LedgerExportService:
         sheet.title = "账本流水"
         headers = [
             "ID",
+            "账本",
+            "账户",
             "类型",
             "金额",
             "币种",
             "分类",
             "备注",
+            "标签",
             "发生时间",
             "是否待报销",
             "报销状态",
@@ -85,11 +110,14 @@ class LedgerExportService:
             sheet.append(
                 [
                     row["id"],
+                    row["book"],
+                    row["account"],
                     _type_label(row["entry_type"]),
                     row["amount"],
                     row["currency"],
                     row["category"],
                     row["note"],
+                    row["tags"] or "",
                     row["occurred_at"],
                     "是" if row["reimbursable"] else "否",
                     row["reimbursement_status"],
@@ -102,6 +130,36 @@ class LedgerExportService:
             max_length = max(len(str(cell.value or "")) for cell in column)
             sheet.column_dimensions[column[0].column_letter].width = min(max(max_length + 2, 10), 36)
         workbook.save(path)
+
+    def import_xlsx(self, path: Path, now: datetime | None = None) -> ImportResult:
+        workbook = load_workbook(path)
+        sheet = workbook.active
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            return ImportResult(path=path, row_count=0)
+
+        headers = [str(value or "").strip() for value in rows[0]]
+        created = 0
+        ledger = LedgerService(self.db)
+        for raw in rows[1:]:
+            row = {headers[index]: raw[index] for index in range(min(len(headers), len(raw)))}
+            amount = row.get("金额")
+            note = row.get("备注") or row.get("原始输入") or row.get("分类") or ""
+            if amount in {None, ""}:
+                continue
+            text_parts = [
+                str(note),
+                str(amount),
+                f"用{row.get('账户')}" if row.get("账户") else "",
+                f"记到{row.get('账本')}" if row.get("账本") else "",
+                " ".join(f"#{tag.strip()}" for tag in str(row.get("标签") or "").split(",") if tag.strip()),
+            ]
+            draft = parse_ledger_text(" ".join(part for part in text_parts if part), now=now)
+            if not draft:
+                continue
+            ledger.create(draft)
+            created += 1
+        return ImportResult(path=path, row_count=created)
 
 
 def parse_export_scope(text: str) -> ExportScope | None:
@@ -125,4 +183,3 @@ def handle_export_text(text: str, service: LedgerExportService) -> str | None:
 def verify_xlsx(path: Path) -> bool:
     workbook = load_workbook(path)
     return bool(workbook.sheetnames)
-
