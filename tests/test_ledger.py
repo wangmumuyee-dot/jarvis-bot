@@ -84,6 +84,39 @@ class LedgerServiceTest(unittest.TestCase):
             assert recurring_reply is not None
             self.assertIn("已创建周期账单", recurring_reply)
 
+    def test_account_balance_category_and_recurring_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = LedgerService(db)
+
+            self.assertEqual(handle_ledger_text("新增分类 宠物 属于生活", service), "已新增分类：生活/宠物。")
+            category_reply = handle_ledger_text("有哪些分类", service)
+            assert category_reply is not None
+            self.assertIn("生活/宠物", category_reply)
+
+            self.assertEqual(handle_ledger_text("设置招行信用卡初始余额 1000", service), "已设置招行信用卡初始余额：1000.00 元。")
+            handle_ledger_text("今天午饭 38，用招行信用卡", service)
+            balance = handle_ledger_text("招行信用卡余额多少", service)
+            self.assertEqual(balance, "招行信用卡余额：962.00 CNY。")
+
+            handle_ledger_text("每月1号自动记账房租 3000", service)
+            generated = service.generate_recurring_due(now=datetime(2026, 6, 8, 12, 0, 0))
+            self.assertEqual(generated.generated_count, 1)
+            generated_again = service.generate_recurring_due(now=datetime(2026, 6, 8, 12, 0, 0))
+            self.assertEqual(generated_again.generated_count, 0)
+
+    def test_budget_warning_after_expense(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = LedgerService(db)
+
+            handle_ledger_text("设置本月餐饮预算 100", service)
+            reply = handle_ledger_text("今天午饭 120", service)
+            assert reply is not None
+            self.assertIn("预算提醒：本月餐饮预算已超支 20.00 元", reply)
+
 
 if __name__ == "__main__":
     unittest.main()

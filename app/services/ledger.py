@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import calendar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
@@ -57,6 +58,19 @@ class LedgerBudgetResult:
     spent: float
     remaining: float
     period: str
+
+
+@dataclass(frozen=True)
+class AccountBalanceResult:
+    account: str
+    balance: float
+    currency: str
+
+
+@dataclass(frozen=True)
+class RecurringGenerationResult:
+    generated_count: int
+    entry_ids: tuple[int, ...]
 
 
 class LedgerParseError(ValueError):
@@ -347,6 +361,123 @@ class LedgerService:
             for row in rows
         ]
 
+    def set_account_opening_balance_from_text(self, text: str) -> str | None:
+        match = re.search(r"设置(.+?)(?:初始余额|余额)\s*(\d+(?:\.\d{1,2})?)", text)
+        if not match:
+            return None
+        account = match.group(1).strip(" ：:，,。")
+        amount = float(match.group(2))
+        if not account:
+            return "你想设置哪个账户的初始余额？"
+        with self.db.connect() as conn:
+            account_id = self._ensure_account(conn, account)
+            conn.execute(
+                """
+                UPDATE ledger_accounts
+                SET opening_balance = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (amount, account_id),
+            )
+        return f"已设置{account}初始余额：{amount:.2f} 元。"
+
+    def query_account_balance(self, text: str) -> AccountBalanceResult | None:
+        if "余额" not in text and "还有多少钱" not in text:
+            return None
+        account = _extract_account_from_balance_query(text)
+        with self.db.connect() as conn:
+            if account:
+                row = conn.execute(
+                    """
+                    SELECT id, name, currency, opening_balance
+                    FROM ledger_accounts
+                    WHERE name = ?
+                    """,
+                    (account,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT id, name, currency, opening_balance
+                    FROM ledger_accounts
+                    WHERE name = '默认账户'
+                    """
+                ).fetchone()
+            if not row:
+                return None
+            balance = self._account_balance(conn, int(row["id"]), float(row["opening_balance"]))
+        return AccountBalanceResult(account=str(row["name"]), balance=balance, currency=str(row["currency"]))
+
+    def manage_category_from_text(self, text: str) -> str | None:
+        if any(token in text for token in ["有哪些分类", "分类列表", "查看分类"]):
+            with self.db.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT name, parent_name, entry_type
+                    FROM ledger_categories
+                    WHERE status = 'active'
+                    ORDER BY parent_name IS NOT NULL, parent_name, name
+                    """
+                ).fetchall()
+            if not rows:
+                return "还没有分类。"
+            labels = []
+            for row in rows:
+                parent = f"{row['parent_name']}/" if row["parent_name"] else ""
+                labels.append(f"{parent}{row['name']}")
+            return "当前分类：" + "、".join(labels)
+
+        match = re.search(r"(?:新增|添加|创建)分类\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})(?:\s*(?:属于|归到)\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20}))?", text)
+        if match:
+            name = match.group(1)
+            parent = match.group(2)
+            with self.db.connect() as conn:
+                self._ensure_category(conn, parent or name, name if parent else None, "expense")
+            return f"已新增分类：{parent + '/' if parent else ''}{name}。"
+
+        match = re.search(r"(?:隐藏|停用)分类\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})", text)
+        if match:
+            name = match.group(1)
+            with self.db.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE ledger_categories
+                    SET status = 'hidden', updated_at = datetime('now')
+                    WHERE name = ?
+                    """,
+                    (name,),
+                )
+            if cursor.rowcount == 0:
+                return f"没有找到分类：{name}"
+            return f"已隐藏分类：{name}。"
+
+        return None
+
+    def _account_balance(self, conn, account_id: int, opening_balance: float) -> float:
+        outgoing = conn.execute(
+            """
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN entry_type IN ('income', 'refund', 'reimbursement') THEN amount
+                    WHEN entry_type IN ('expense', 'transfer') THEN -amount
+                    ELSE 0
+                END
+            ), 0) AS total
+            FROM ledger_entries
+            WHERE account_id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        incoming_transfer = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM ledger_entries
+            WHERE entry_type = 'transfer' AND transfer_to_account_id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        return opening_balance + float(outgoing["total"]) + float(incoming_transfer["total"])
+
     def create_recurring_from_text(self, text: str) -> str | None:
         if not ("每月" in text and any(token in text for token in ["自动记账", "周期账单", "固定支出", "固定收入"])):
             return None
@@ -388,6 +519,87 @@ class LedgerService:
             recurring_id = int(cursor.lastrowid)
         return f"已创建周期账单 #{recurring_id}：每月 {day} 号，{draft.note} {draft.amount:.2f} 元。"
 
+    def generate_recurring_due(self, now: datetime | None = None) -> RecurringGenerationResult:
+        now = now or datetime.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        _, last_day = calendar.monthrange(now.year, now.month)
+        generated: list[int] = []
+
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    recurring_ledger_entries.*,
+                    COALESCE(ledger_books.name, '日常账本') AS book,
+                    COALESCE(ledger_accounts.name, '默认账户') AS account
+                FROM recurring_ledger_entries
+                LEFT JOIN ledger_books ON ledger_books.id = recurring_ledger_entries.book_id
+                LEFT JOIN ledger_accounts ON ledger_accounts.id = recurring_ledger_entries.account_id
+                WHERE recurring_ledger_entries.status = 'active'
+                    AND (
+                        recurring_ledger_entries.last_generated_at IS NULL
+                        OR recurring_ledger_entries.last_generated_at < ?
+                    )
+                ORDER BY recurring_ledger_entries.id
+                """,
+                (month_start.isoformat(timespec="seconds"),),
+            ).fetchall()
+
+        for row in rows:
+            day = min(int(row["day_of_month"]), last_day)
+            occurred_at = now.replace(day=day, hour=9, minute=0, second=0, microsecond=0)
+            if occurred_at > now:
+                continue
+            draft = LedgerEntryDraft(
+                entry_type=row["entry_type"],
+                amount=float(row["amount"]),
+                currency=row["currency"],
+                category=row["category"],
+                subcategory=None,
+                note=row["note"],
+                occurred_at=occurred_at,
+                reimbursable=False,
+                reimbursement_status="none",
+                source_text=row["source_text"],
+                book=row["book"],
+                account=row["account"],
+                tags=("周期账单",),
+            )
+            entry = self.create(draft)
+            generated.append(entry.id)
+            with self.db.connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE recurring_ledger_entries
+                    SET last_generated_at = ?, updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (now.isoformat(timespec="seconds"), row["id"]),
+                )
+
+        return RecurringGenerationResult(generated_count=len(generated), entry_ids=tuple(generated))
+
+    def handle_recurring_generation_text(self, text: str) -> str | None:
+        if not any(token in text for token in ["生成本月周期账单", "执行周期账单", "生成周期账单"]):
+            return None
+        result = self.generate_recurring_due()
+        if result.generated_count == 0:
+            return "没有需要生成的周期账单。"
+        ids = "、".join(f"#{entry_id}" for entry_id in result.entry_ids)
+        return f"已生成 {result.generated_count} 笔周期账单：{ids}。"
+
+    def budget_warning_for_entry(self, draft: LedgerEntryDraft, now: datetime | None = None) -> str | None:
+        if draft.entry_type != "expense":
+            return None
+        budget = self.query_budget(f"本月{draft.category}预算还剩多少", now=now or draft.occurred_at)
+        if not budget:
+            return None
+        if budget.remaining < 0:
+            return f"预算提醒：本月{draft.category}预算已超支 {-budget.remaining:.2f} 元。"
+        if budget.amount > 0 and budget.spent / budget.amount >= 0.8:
+            return f"预算提醒：本月{draft.category}预算已用 {budget.spent:.2f}/{budget.amount:.2f} 元。"
+        return None
+
     def _sum_between(
         self,
         start: datetime,
@@ -425,6 +637,14 @@ class LedgerService:
 
 
 def handle_ledger_text(text: str, service: LedgerService) -> str | None:
+    category_reply = service.manage_category_from_text(text)
+    if category_reply:
+        return category_reply
+
+    account_set = service.set_account_opening_balance_from_text(text)
+    if account_set:
+        return account_set
+
     budget_set = service.set_budget_from_text(text)
     if budget_set:
         return budget_set
@@ -436,9 +656,17 @@ def handle_ledger_text(text: str, service: LedgerService) -> str | None:
             f"已用 {budget.spent:.2f} 元，还剩 {budget.remaining:.2f} 元。"
         )
 
+    account_balance = service.query_account_balance(text)
+    if account_balance:
+        return f"{account_balance.account}余额：{account_balance.balance:.2f} {account_balance.currency}。"
+
     recurring = service.create_recurring_from_text(text)
     if recurring:
         return recurring
+
+    recurring_generation = service.handle_recurring_generation_text(text)
+    if recurring_generation:
+        return recurring_generation
 
     search = service.search(text)
     if search is not None:
@@ -471,10 +699,12 @@ def handle_ledger_text(text: str, service: LedgerService) -> str | None:
     if draft.tags:
         dimensions.append("标签：" + "、".join(f"#{tag}" for tag in draft.tags))
     dimension_text = "，" + "，".join(dimensions) if dimensions else ""
+    budget_warning = service.budget_warning_for_entry(draft)
+    warning_text = f"\n{budget_warning}" if budget_warning else ""
     return (
         f"已记录流水 #{entry.id}：{draft.amount:.2f} 元，"
         f"类型：{_type_label(draft.entry_type)}，分类：{draft.category}，"
-        f"备注：{draft.note}{status}{dimension_text}。"
+        f"备注：{draft.note}{status}{dimension_text}。{warning_text}"
     )
 
 
@@ -565,6 +795,10 @@ def _extract_book(text: str) -> str:
 
 
 def _extract_account(text: str, entry_type: EntryType) -> str:
+    if entry_type == "transfer":
+        match = re.search(r"从([\u4e00-\u9fa5A-Za-z0-9_-]{2,20})(?:转到|转入|到)", text)
+        if match:
+            return match.group(1)
     if entry_type == "income":
         match = re.search(r"(?:到|入账到|到账到)([\u4e00-\u9fa5A-Za-z0-9_-]{2,20})", text)
         if match:
@@ -576,6 +810,14 @@ def _extract_account(text: str, entry_type: EntryType) -> str:
 def _extract_transfer_to_account(text: str) -> str | None:
     match = re.search(r"(?:转到|转入|到)([\u4e00-\u9fa5A-Za-z0-9_-]{2,20})", text)
     return match.group(1) if match else None
+
+
+def _extract_account_from_balance_query(text: str) -> str | None:
+    cleaned = text
+    for token in ["余额", "还有多少钱", "还剩多少钱", "多少钱", "多少", "查询", "看看", "查"]:
+        cleaned = cleaned.replace(token, " ")
+    cleaned = cleaned.strip(" ：:，,。")
+    return cleaned or None
 
 
 def _infer_account_type(name: str) -> str:
