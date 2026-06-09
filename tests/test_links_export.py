@@ -11,7 +11,7 @@ from app.ai.summarize import SummaryService, summarize_locally
 import app.services.knowledge as knowledge_module
 from app.services.export import LedgerExportService, handle_export_text, verify_xlsx
 from app.services.knowledge import KnowledgeService, handle_knowledge_text
-from app.services.ledger import LedgerService, parse_ledger_text
+from app.services.ledger import LedgerEntryDraft, LedgerService, parse_ledger_text
 from app.storage.db import Database
 from app.utils.links import FetchedPage, extract_page_text
 
@@ -113,6 +113,36 @@ class LinkAndExportTest(unittest.TestCase):
         query = ledger.query("这个月餐饮花了多少", now=datetime(2026, 6, 8, 12, 0, 0))
         assert query is not None
         self.assertEqual(query.total, 88)
+
+    def test_redacted_export_masks_sensitive_text(self) -> None:
+        ledger = LedgerService(self.db)
+        ledger.create(
+            LedgerEntryDraft(
+                entry_type="expense",
+                amount=1,
+                currency="CNY",
+                category="其他",
+                subcategory=None,
+                note="密码=abc123",
+                occurred_at=datetime.now(),
+                reimbursable=False,
+                reimbursement_status="none",
+                source_text="密码=abc123 付款 1",
+            )
+        )
+
+        export_service = LedgerExportService(self.db, self.root / "exports")
+        reply = handle_export_text("导出脱敏账单", export_service)
+        assert reply is not None
+        self.assertIn("已导出脱敏账本 Excel", reply)
+
+        files = list((self.root / "exports").glob("*redacted*.xlsx"))
+        self.assertEqual(len(files), 1)
+        workbook = load_workbook(files[0])
+        rows = list(workbook.active.iter_rows(values_only=True))
+        flat = "\n".join(str(value) for row in rows for value in row if value is not None)
+        self.assertNotIn("abc123", flat)
+        self.assertIn("已脱敏", flat)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from app.logging_config import configure_logging
 from app.scheduler.jobs import ReminderScheduler
 from app.security.sensitive import SENSITIVE_REPLY, detect_sensitive
 from app.services.export import LedgerExportService, handle_export_text
+from app.services.finance_p2 import FinanceP2Service, handle_finance_p2_text
 from app.services.knowledge import KnowledgeService, handle_knowledge_text
 from app.services.ledger import LedgerService, handle_ledger_text
 from app.services.obsidian_git import ObsidianGitSync
@@ -53,6 +54,13 @@ obsidian_git_sync = (
 )
 knowledge_service = KnowledgeService(db, settings.obsidian_vault_path, summary_service, git_sync=obsidian_git_sync)
 export_service = LedgerExportService(db, settings.export_dir)
+finance_p2_service = FinanceP2Service(
+    db,
+    export_service,
+    settings.obsidian_vault_path,
+    git_sync=obsidian_git_sync,
+    summary_service=summary_service,
+)
 message_store = MessageStore(db)
 feishu_client = FeishuClient(settings)
 intent_parser = IntentParser(
@@ -165,6 +173,17 @@ def route_text(text: str, *, context: TodoContext | None = None) -> str:
 
     if normalized.lower() == "ping":
         return "pong"
+
+    template = finance_p2_service.expand_quick_template(normalized)
+    if template:
+        if template.command_text.strip() == normalized:
+            return f"模板 {template.name} 指向了自己，已停止执行，避免循环。"
+        executed = route_text(template.command_text, context=context)
+        return f"已使用模板「{template.name}」：{template.command_text}\n{executed}"
+
+    finance_p2_reply = handle_finance_p2_text(normalized, finance_p2_service)
+    if finance_p2_reply:
+        return finance_p2_reply
 
     export_reply = handle_export_text(normalized, export_service)
     if export_reply:

@@ -176,6 +176,52 @@ CREATE TABLE IF NOT EXISTS finance_settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS saving_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    target_amount REAL NOT NULL CHECK (target_amount >= 0),
+    current_amount REAL NOT NULL DEFAULT 0 CHECK (current_amount >= 0),
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    target_date TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (
+        status IN ('active', 'completed', 'archived')
+    ),
+    source_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS quick_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    command_text TEXT NOT NULL,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'imported', 'failed')
+    ),
+    row_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sync_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('ok', 'failed', 'skipped')
+    ),
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,

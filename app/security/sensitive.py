@@ -63,6 +63,30 @@ def detect_sensitive(text: str) -> SensitiveMatch | None:
     return None
 
 
+def redact_sensitive_text(text: object) -> str:
+    value = str(text or "")
+    if not value:
+        return value
+
+    value = ID_CARD_RE.sub("[已脱敏:身份证]", value)
+    value = VERIFY_CODE_RE.sub("[已脱敏:验证码]", value)
+    value = PRIVATE_KEY_RE.sub("[已脱敏:私钥]", value)
+    value = API_KEY_RE.sub("[已脱敏:密钥]", value)
+    value = re.sub(
+        r"(?i)(密码|password|passwd|pwd|token|secret|api[_-]?key)\s*[:：=是]\s*\S+",
+        r"\1=[已脱敏]",
+        value,
+    )
+
+    def replace_bank_card(match: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if len(digits) >= 16 and _luhn_checksum_valid(digits):
+            return f"[已脱敏:银行卡尾号{digits[-4:]}]"
+        return match.group(0)
+
+    return BANK_CARD_RE.sub(replace_bank_card, value)
+
+
 def _contains_password_like_text(text: str) -> bool:
     lower = text.lower()
     if not any(keyword in lower for keyword in PASSWORD_KEYWORDS):
@@ -89,4 +113,3 @@ def _luhn_checksum_valid(number: str) -> bool:
                 digit -= 9
         total += digit
     return total % 10 == 0
-

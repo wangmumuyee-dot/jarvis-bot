@@ -8,6 +8,7 @@ from typing import Literal
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
+from app.security.sensitive import redact_sensitive_text
 from app.storage.db import Database
 from app.services.ledger import LedgerService, parse_ledger_text, _type_label
 
@@ -19,6 +20,7 @@ class ExportResult:
     path: Path
     row_count: int
     scope: ExportScope
+    redacted: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,13 +34,14 @@ class LedgerExportService:
         self.db = db
         self.export_dir = export_dir
 
-    def export(self, scope: ExportScope, now: datetime | None = None) -> ExportResult:
+    def export(self, scope: ExportScope, now: datetime | None = None, *, redact_sensitive: bool = False) -> ExportResult:
         now = now or datetime.now()
         rows = self._rows(scope, now)
         self.export_dir.mkdir(parents=True, exist_ok=True)
-        path = self.export_dir / f"ledger-{scope}-{now.strftime('%Y%m%d-%H%M%S')}.xlsx"
-        self._write_workbook(path, rows)
-        return ExportResult(path=path, row_count=len(rows), scope=scope)
+        suffix = "-redacted" if redact_sensitive else ""
+        path = self.export_dir / f"ledger-{scope}{suffix}-{now.strftime('%Y%m%d-%H%M%S')}.xlsx"
+        self._write_workbook(path, rows, redact_sensitive=redact_sensitive)
+        return ExportResult(path=path, row_count=len(rows), scope=scope, redacted=redact_sensitive)
 
     def _rows(self, scope: ExportScope, now: datetime) -> list[dict[str, object]]:
         where = ""
@@ -82,7 +85,7 @@ class LedgerExportService:
             ).fetchall()
         return [dict(record) for record in records]
 
-    def _write_workbook(self, path: Path, rows: list[dict[str, object]]) -> None:
+    def _write_workbook(self, path: Path, rows: list[dict[str, object]], *, redact_sensitive: bool = False) -> None:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "账本流水"
@@ -107,6 +110,8 @@ class LedgerExportService:
             cell.font = Font(bold=True)
 
         for row in rows:
+            note = redact_sensitive_text(row["note"]) if redact_sensitive else row["note"]
+            source_text = redact_sensitive_text(row["source_text"]) if redact_sensitive else row["source_text"]
             sheet.append(
                 [
                     row["id"],
@@ -116,12 +121,12 @@ class LedgerExportService:
                     row["amount"],
                     row["currency"],
                     row["category"],
-                    row["note"],
+                    note,
                     row["tags"] or "",
                     row["occurred_at"],
                     "是" if row["reimbursable"] else "否",
                     row["reimbursement_status"],
-                    row["source_text"],
+                    source_text,
                     row["created_at"],
                 ]
             )
@@ -163,6 +168,8 @@ class LedgerExportService:
 
 
 def parse_export_scope(text: str) -> ExportScope | None:
+    if "导入" in text:
+        return None
     if "导出" not in text and "Excel" not in text and "excel" not in text and "账单" not in text:
         return None
     if "待报销" in text:
@@ -176,8 +183,10 @@ def handle_export_text(text: str, service: LedgerExportService) -> str | None:
     scope = parse_export_scope(text)
     if not scope:
         return None
-    result = service.export(scope)
-    return f"已导出账本 Excel：{result.path}，共 {result.row_count} 条记录。"
+    redacted = any(token in text for token in ["脱敏", "隐私", "安全"])
+    result = service.export(scope, redact_sensitive=redacted)
+    privacy = "脱敏" if result.redacted else ""
+    return f"已导出{privacy}账本 Excel：{result.path}，共 {result.row_count} 条记录。"
 
 
 def verify_xlsx(path: Path) -> bool:
