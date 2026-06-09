@@ -41,6 +41,13 @@ class LedgerParserTest(unittest.TestCase):
         self.assertEqual(draft.book, "旅行账本")
         self.assertEqual(draft.tags, ("出差",))
 
+    def test_parse_foreign_currency(self) -> None:
+        draft = parse_ledger_text("买资料 12美元", now=datetime(2026, 6, 2, 12, 0, 0))
+        assert draft is not None
+        self.assertEqual(draft.amount, 12)
+        self.assertEqual(draft.currency, "USD")
+        self.assertEqual(draft.category, "购物")
+
 
 class LedgerServiceTest(unittest.TestCase):
     def test_create_and_query_month(self) -> None:
@@ -116,6 +123,50 @@ class LedgerServiceTest(unittest.TestCase):
             reply = handle_ledger_text("今天午饭 120", service)
             assert reply is not None
             self.assertIn("预算提醒：本月餐饮预算已超支 20.00 元", reply)
+
+    def test_credit_card_debt_settings_and_stats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = LedgerService(db)
+
+            card_reply = handle_ledger_text("设置招行信用卡账单日5号还款日25号", service)
+            self.assertEqual(card_reply, "已设置招行信用卡：账单日每月 5 号，还款日每月 25 号。")
+
+            card_query = handle_ledger_text("招行信用卡还款日", service)
+            self.assertEqual(card_query, "招行信用卡：账单日每月 5 号，还款日每月 25 号。")
+
+            lend_reply = handle_ledger_text("借给小王 500", service)
+            assert lend_reply is not None
+            self.assertIn("小王欠我 500.00 元", lend_reply)
+
+            repay_reply = handle_ledger_text("小王还我 200", service)
+            self.assertEqual(repay_reply, "已更新还款：小王已还 200.00 元，剩余 300.00 元。")
+
+            debt_list = handle_ledger_text("有哪些欠款", service)
+            assert debt_list is not None
+            self.assertIn("小王欠我 300.00 元", debt_list)
+
+            month_reply = handle_ledger_text("设置每月从5号开始", service)
+            self.assertEqual(month_reply, "已设置财务月从每月 5 号开始。")
+
+            week_reply = handle_ledger_text("设置每周从周一开始", service)
+            self.assertEqual(week_reply, "已设置财务周从周一开始。")
+
+            settings_reply = handle_ledger_text("财务周期设置", service)
+            self.assertEqual(settings_reply, "当前财务周期：每月从 5 号开始，每周从周一开始。")
+
+            handle_ledger_text("今天午饭 38", service)
+            handle_ledger_text("工资到账 1000", service)
+
+            stats_reply = handle_ledger_text("本月分类统计", service)
+            assert stats_reply is not None
+            self.assertIn("餐饮: 38.00 元，1 笔", stats_reply)
+
+            calendar_reply = handle_ledger_text("本月账单日历", service)
+            assert calendar_reply is not None
+            self.assertIn("支出 38.00 元", calendar_reply)
+            self.assertIn("收入 1000.00 元", calendar_reply)
 
 
 if __name__ == "__main__":

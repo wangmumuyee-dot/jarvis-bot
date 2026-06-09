@@ -148,6 +148,34 @@ CREATE TABLE IF NOT EXISTS recurring_ledger_entries (
     FOREIGN KEY(account_id) REFERENCES ledger_accounts(id)
 );
 
+CREATE TABLE IF NOT EXISTS ledger_debts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    debt_type TEXT NOT NULL CHECK (
+        debt_type IN ('lend', 'borrow')
+    ),
+    person TEXT NOT NULL,
+    amount REAL NOT NULL CHECK (amount >= 0),
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    repaid_amount REAL NOT NULL DEFAULT 0 CHECK (repaid_amount >= 0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (
+        status IN ('open', 'settled', 'cancelled')
+    ),
+    due_at TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    source_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_debts_status_person
+ON ledger_debts(status, person);
+
+CREATE TABLE IF NOT EXISTS finance_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -224,7 +252,9 @@ class Database:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
             _migrate_ledger_entries(conn)
+            _migrate_ledger_accounts(conn)
             _seed_ledger_defaults(conn)
+            _seed_finance_settings(conn)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -260,6 +290,23 @@ def _migrate_ledger_entries(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_ledger_accounts(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(ledger_accounts)").fetchall()}
+    migrations = {
+        "account_type": "ALTER TABLE ledger_accounts ADD COLUMN account_type TEXT NOT NULL DEFAULT 'asset'",
+        "currency": "ALTER TABLE ledger_accounts ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'",
+        "opening_balance": "ALTER TABLE ledger_accounts ADD COLUMN opening_balance REAL NOT NULL DEFAULT 0",
+        "statement_day": "ALTER TABLE ledger_accounts ADD COLUMN statement_day INTEGER",
+        "repayment_day": "ALTER TABLE ledger_accounts ADD COLUMN repayment_day INTEGER",
+        "status": "ALTER TABLE ledger_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+        "created_at": "ALTER TABLE ledger_accounts ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+        "updated_at": "ALTER TABLE ledger_accounts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
+            conn.execute(statement)
+
+
 def _seed_ledger_defaults(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -267,6 +314,22 @@ def _seed_ledger_defaults(conn: sqlite3.Connection) -> None:
         VALUES (1, '日常账本')
         """
     )
+
+
+def _seed_finance_settings(conn: sqlite3.Connection) -> None:
+    defaults = {
+        "base_currency": "CNY",
+        "week_start_day": "1",
+        "month_start_day": "1",
+    }
+    for key, value in defaults.items():
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO finance_settings (key, value)
+            VALUES (?, ?)
+            """,
+            (key, value),
+        )
     conn.execute(
         """
         INSERT OR IGNORE INTO ledger_accounts (id, name, account_type)

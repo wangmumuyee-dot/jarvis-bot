@@ -73,6 +73,29 @@ class RecurringGenerationResult:
     entry_ids: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class CategoryStat:
+    category: str
+    total: float
+    count: int
+
+
+@dataclass(frozen=True)
+class CalendarDayStat:
+    date: str
+    expense: float
+    income: float
+
+
+@dataclass(frozen=True)
+class DebtSummaryItem:
+    id: int
+    debt_type: str
+    person: str
+    remaining: float
+    currency: str
+
+
 class LedgerParseError(ValueError):
     pass
 
@@ -87,6 +110,14 @@ CATEGORY_KEYWORDS = [
     ("健康", ["药", "医院", "体检", "健身"]),
     ("居住", ["房租", "水电", "物业", "宽带"]),
     ("娱乐", ["电影", "游戏", "演出", "会员"]),
+]
+
+CURRENCY_KEYWORDS = [
+    ("USD", ["美元", "美金", "USD", "$"]),
+    ("HKD", ["港币", "HKD"]),
+    ("JPY", ["日元", "JPY"]),
+    ("EUR", ["欧元", "EUR"]),
+    ("CNY", ["人民币", "CNY", "元", "块"]),
 ]
 
 
@@ -119,10 +150,11 @@ def parse_ledger_text(text: str, now: datetime | None = None) -> LedgerEntryDraf
     transfer_to_account = _extract_transfer_to_account(stripped) if entry_type == "transfer" else None
     tags = tuple(_extract_tags(stripped))
 
+    currency = _detect_currency(stripped)
     return LedgerEntryDraft(
         entry_type=entry_type,
         amount=amount,
-        currency="CNY",
+        currency=currency,
         category=category,
         subcategory=subcategory,
         note=note or category,
@@ -453,6 +485,316 @@ class LedgerService:
 
         return None
 
+    def configure_credit_card_from_text(self, text: str) -> str | None:
+        if "设置" not in text or "账单日" not in text or "还款日" not in text:
+            return None
+
+        match = re.search(
+            r"设置\s*(.+?)\s*账单日\s*(\d{1,2})\s*号?.*?还款日\s*(\d{1,2})\s*号?",
+            text,
+        )
+        if not match:
+            return "信用卡设置需要包含账户、账单日和还款日，例如：设置招行信用卡账单日5号还款日25号。"
+
+        account = match.group(1).strip(" ：:，,。")
+        statement_day = int(match.group(2))
+        repayment_day = int(match.group(3))
+        if not account:
+            return "你想设置哪张信用卡？"
+        if not _valid_month_day(statement_day) or not _valid_month_day(repayment_day):
+            return "账单日和还款日需要在 1 到 31 之间。"
+
+        with self.db.connect() as conn:
+            account_id = self._ensure_account(conn, account)
+            conn.execute(
+                """
+                UPDATE ledger_accounts
+                SET account_type = 'credit_card',
+                    statement_day = ?,
+                    repayment_day = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (statement_day, repayment_day, account_id),
+            )
+        return f"已设置{account}：账单日每月 {statement_day} 号，还款日每月 {repayment_day} 号。"
+
+    def query_credit_card_from_text(self, text: str) -> str | None:
+        if "信用卡" not in text or not any(token in text for token in ["账单日", "还款日"]):
+            return None
+        account = _extract_credit_card_account_from_query(text)
+        with self.db.connect() as conn:
+            if account:
+                row = conn.execute(
+                    """
+                    SELECT name, statement_day, repayment_day
+                    FROM ledger_accounts
+                    WHERE name = ? AND account_type = 'credit_card'
+                    """,
+                    (account,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT name, statement_day, repayment_day
+                    FROM ledger_accounts
+                    WHERE account_type = 'credit_card'
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+        if not row:
+            return None
+        if row["statement_day"] is None or row["repayment_day"] is None:
+            return f"{row['name']}还没有设置账单日和还款日。"
+        return f"{row['name']}：账单日每月 {row['statement_day']} 号，还款日每月 {row['repayment_day']} 号。"
+
+    def handle_debt_from_text(self, text: str) -> str | None:
+        stripped = text.strip()
+        if any(token in stripped for token in ["欠款", "债务", "借款"]) and any(
+            token in stripped for token in ["哪些", "列表", "多少", "查询", "查看"]
+        ):
+            items = self.list_open_debts()
+            if not items:
+                return "当前没有未结清欠款。"
+            lines = ["当前欠款："]
+            for item in items:
+                label = f"{item.person}欠我" if item.debt_type == "lend" else f"我欠{item.person}"
+                lines.append(f"- #{item.id} {label} {_format_money(item.remaining, item.currency)}")
+            return "\n".join(lines)
+
+        repay_reply = self._handle_debt_repayment(stripped)
+        if repay_reply:
+            return repay_reply
+
+        lend_match = re.search(r"(?:我)?借给\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})\s*(\d+(?:\.\d{1,2})?)", stripped)
+        if lend_match:
+            return self._create_debt_reply("lend", lend_match.group(1), float(lend_match.group(2)), stripped)
+
+        borrow_match = re.search(
+            r"(?:我)?(?:向|找|跟)\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})\s*(?:借了|借入|借)\s*(\d+(?:\.\d{1,2})?)",
+            stripped,
+        )
+        if borrow_match:
+            return self._create_debt_reply("borrow", borrow_match.group(1), float(borrow_match.group(2)), stripped)
+
+        return None
+
+    def list_open_debts(self) -> list[DebtSummaryItem]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, debt_type, person, amount, repaid_amount, currency
+                FROM ledger_debts
+                WHERE status = 'open' AND amount > repaid_amount
+                ORDER BY created_at DESC, id DESC
+                """
+            ).fetchall()
+        return [
+            DebtSummaryItem(
+                id=int(row["id"]),
+                debt_type=str(row["debt_type"]),
+                person=str(row["person"]),
+                remaining=float(row["amount"]) - float(row["repaid_amount"]),
+                currency=str(row["currency"]),
+            )
+            for row in rows
+        ]
+
+    def _create_debt_reply(self, debt_type: str, person: str, amount: float, source_text: str) -> str:
+        currency = _detect_currency(source_text)
+        with self.db.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO ledger_debts (debt_type, person, amount, currency, source_text)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (debt_type, person, amount, currency, source_text),
+            )
+            debt_id = int(cursor.lastrowid)
+        label = f"{person}欠我" if debt_type == "lend" else f"我欠{person}"
+        return f"已记录欠款 #{debt_id}：{label} {_format_money(amount, currency)}。"
+
+    def _handle_debt_repayment(self, text: str) -> str | None:
+        match = re.search(r"([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})(?:还我|还给我)\s*(\d+(?:\.\d{1,2})?)", text)
+        if match:
+            return self._apply_debt_repayment_reply("lend", match.group(1), float(match.group(2)), text)
+
+        match = re.search(r"我(?:还|还给)\s*([\u4e00-\u9fa5A-Za-z0-9_-]{1,20})\s*(\d+(?:\.\d{1,2})?)", text)
+        if match:
+            return self._apply_debt_repayment_reply("borrow", match.group(1), float(match.group(2)), text)
+        return None
+
+    def _apply_debt_repayment_reply(self, debt_type: str, person: str, amount: float, source_text: str) -> str:
+        currency = _detect_currency(source_text)
+        remaining_payment = amount
+        total_remaining = 0.0
+        matched = False
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, amount, repaid_amount
+                FROM ledger_debts
+                WHERE debt_type = ?
+                    AND person = ?
+                    AND currency = ?
+                    AND status = 'open'
+                    AND amount > repaid_amount
+                ORDER BY created_at, id
+                """,
+                (debt_type, person, currency),
+            ).fetchall()
+            if not rows:
+                label = f"{person}欠我的" if debt_type == "lend" else f"我欠{person}的"
+                return f"没有找到{label}未结清欠款。"
+
+            matched = True
+            for index, row in enumerate(rows):
+                debt_remaining = float(row["amount"]) - float(row["repaid_amount"])
+                payment = min(debt_remaining, remaining_payment)
+                if payment > 0:
+                    new_repaid = float(row["repaid_amount"]) + payment
+                    status = "settled" if new_repaid >= float(row["amount"]) else "open"
+                    conn.execute(
+                        """
+                        UPDATE ledger_debts
+                        SET repaid_amount = ?,
+                            status = ?,
+                            updated_at = datetime('now')
+                        WHERE id = ?
+                        """,
+                        (new_repaid, status, row["id"]),
+                    )
+                    remaining_payment -= payment
+                total_remaining += max(0.0, debt_remaining - payment)
+                if remaining_payment <= 0:
+                    for rest in rows[index + 1 :]:
+                        total_remaining += float(rest["amount"]) - float(rest["repaid_amount"])
+                    break
+
+        if not matched:
+            return None
+        actor = f"{person}已还" if debt_type == "lend" else "我已还"
+        extra = f"，多出的 {_format_money(remaining_payment, currency)} 没有匹配到欠款" if remaining_payment > 0 else ""
+        return (
+            f"已更新还款：{actor} {_format_money(amount, currency)}，"
+            f"剩余 {_format_money(total_remaining, currency)}{extra}。"
+        )
+
+    def handle_finance_settings_text(self, text: str) -> str | None:
+        if any(token in text for token in ["财务周期设置", "记账周期设置", "账本设置"]):
+            month_start = self._get_setting("month_start_day", "1")
+            week_start = self._get_setting("week_start_day", "1")
+            return f"当前财务周期：每月从 {month_start} 号开始，每周从{_weekday_label(int(week_start))}开始。"
+
+        month_match = re.search(r"设置(?:每月|月度|本月)?(?:从)?\s*(\d{1,2})\s*号开始", text)
+        if month_match:
+            day = int(month_match.group(1))
+            if not _valid_month_day(day):
+                return "每月开始日期需要在 1 到 31 之间。"
+            self._set_setting("month_start_day", str(day))
+            return f"已设置财务月从每月 {day} 号开始。"
+
+        week_match = re.search(r"设置(?:每周|周)?(?:从)?\s*(周[一二三四五六日天]|星期[一二三四五六日天])开始", text)
+        if week_match:
+            day = _parse_weekday(week_match.group(1))
+            self._set_setting("week_start_day", str(day))
+            return f"已设置财务周从{_weekday_label(day)}开始。"
+        return None
+
+    def handle_stats_from_text(self, text: str, now: datetime | None = None) -> str | None:
+        now = now or datetime.now()
+        if any(token in text for token in ["账单日历", "记账日历", "本月日历"]):
+            rows = self.calendar_stats(now=now)
+            if not rows:
+                return "本月还没有账单。"
+            lines = ["本月账单日历："]
+            for row in rows:
+                lines.append(f"- {row.date}: 支出 {_format_money(row.expense, 'CNY')}，收入 {_format_money(row.income, 'CNY')}")
+            return "\n".join(lines)
+
+        if any(token in text for token in ["分类统计", "分类排行", "本月统计", "本月分类"]):
+            rows = self.category_stats(now=now)
+            if not rows:
+                return "本月还没有支出记录。"
+            lines = ["本月分类统计："]
+            for row in rows:
+                lines.append(f"- {row.category}: {_format_money(row.total, 'CNY')}，{row.count} 笔")
+            return "\n".join(lines)
+        return None
+
+    def category_stats(self, now: datetime | None = None) -> list[CategoryStat]:
+        start, end = self._current_month_range(now or datetime.now())
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT category, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count
+                FROM ledger_entries
+                WHERE entry_type = 'expense'
+                    AND currency = 'CNY'
+                    AND occurred_at >= ?
+                    AND occurred_at < ?
+                GROUP BY category
+                ORDER BY total DESC
+                """,
+                (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")),
+            ).fetchall()
+        return [CategoryStat(category=str(row["category"]), total=float(row["total"]), count=int(row["count"])) for row in rows]
+
+    def calendar_stats(self, now: datetime | None = None) -> list[CalendarDayStat]:
+        start, end = self._current_month_range(now or datetime.now())
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    substr(occurred_at, 1, 10) AS day,
+                    COALESCE(SUM(CASE WHEN entry_type = 'expense' AND currency = 'CNY' THEN amount ELSE 0 END), 0) AS expense,
+                    COALESCE(SUM(CASE WHEN entry_type IN ('income', 'refund', 'reimbursement') AND currency = 'CNY' THEN amount ELSE 0 END), 0) AS income
+                FROM ledger_entries
+                WHERE occurred_at >= ?
+                    AND occurred_at < ?
+                GROUP BY day
+                ORDER BY day
+                """,
+                (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")),
+            ).fetchall()
+        return [
+            CalendarDayStat(date=str(row["day"]), expense=float(row["expense"]), income=float(row["income"]))
+            for row in rows
+        ]
+
+    def _current_month_range(self, now: datetime) -> tuple[datetime, datetime]:
+        month_start_day = int(self._get_setting("month_start_day", "1"))
+        day = min(month_start_day, calendar.monthrange(now.year, now.month)[1])
+        start = now.replace(day=day, hour=0, minute=0, second=0, microsecond=0)
+        if now < start:
+            prev_year = now.year - 1 if now.month == 1 else now.year
+            prev_month = 12 if now.month == 1 else now.month - 1
+            prev_day = min(month_start_day, calendar.monthrange(prev_year, prev_month)[1])
+            start = start.replace(year=prev_year, month=prev_month, day=prev_day)
+        next_year = start.year + 1 if start.month == 12 else start.year
+        next_month = 1 if start.month == 12 else start.month + 1
+        next_day = min(month_start_day, calendar.monthrange(next_year, next_month)[1])
+        end = start.replace(year=next_year, month=next_month, day=next_day)
+        return start, end
+
+    def _get_setting(self, key: str, default: str) -> str:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT value FROM finance_settings WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else default
+
+    def _set_setting(self, key: str, value: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO finance_settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+                """,
+                (key, value),
+            )
+
     def _account_balance(self, conn, account_id: int, opening_balance: float) -> float:
         outgoing = conn.execute(
             """
@@ -641,6 +983,26 @@ def handle_ledger_text(text: str, service: LedgerService) -> str | None:
     if category_reply:
         return category_reply
 
+    credit_card_set = service.configure_credit_card_from_text(text)
+    if credit_card_set:
+        return credit_card_set
+
+    credit_card_query = service.query_credit_card_from_text(text)
+    if credit_card_query:
+        return credit_card_query
+
+    debt_reply = service.handle_debt_from_text(text)
+    if debt_reply:
+        return debt_reply
+
+    finance_settings = service.handle_finance_settings_text(text)
+    if finance_settings:
+        return finance_settings
+
+    stats = service.handle_stats_from_text(text)
+    if stats:
+        return stats
+
     account_set = service.set_account_opening_balance_from_text(text)
     if account_set:
         return account_set
@@ -702,7 +1064,7 @@ def handle_ledger_text(text: str, service: LedgerService) -> str | None:
     budget_warning = service.budget_warning_for_entry(draft)
     warning_text = f"\n{budget_warning}" if budget_warning else ""
     return (
-        f"已记录流水 #{entry.id}：{draft.amount:.2f} 元，"
+        f"已记录流水 #{entry.id}：{_format_money(draft.amount, draft.currency)}，"
         f"类型：{_type_label(draft.entry_type)}，分类：{draft.category}，"
         f"备注：{draft.note}{status}{dimension_text}。{warning_text}"
     )
@@ -780,7 +1142,8 @@ def _clean_note(text: str, amount_text: str) -> str:
     note = re.sub(r"(?:用|从|通过)([\u4e00-\u9fa5A-Za-z0-9_-]{2,20})(?:支付|付款|付)?", " ", note)
     note = re.sub(r"(?:记到|放到|归到)([\u4e00-\u9fa5A-Za-z0-9_-]{2,20}账本)", " ", note)
     note = re.sub(r"(?:分类|归类)[为到]?\s*([\u4e00-\u9fa5A-Za-z0-9_-]{2,12})", " ", note)
-    for token in ["今天", "昨天", "前天", "花了", "花", "元", "块钱", "块", "待报销", "自动记账", "周期账单"]:
+    currency_tokens = [token for _code, tokens in CURRENCY_KEYWORDS for token in tokens]
+    for token in ["今天", "昨天", "前天", "花了", "花", "待报销", "自动记账", "周期账单", *currency_tokens]:
         note = note.replace(token, " ")
     return " ".join(note.split())
 
@@ -820,6 +1183,14 @@ def _extract_account_from_balance_query(text: str) -> str | None:
     return cleaned or None
 
 
+def _extract_credit_card_account_from_query(text: str) -> str | None:
+    cleaned = text
+    for token in ["账单日", "还款日", "信用卡", "多少", "查询", "查看", "看看", "是几号", "几号", "？", "?"]:
+        cleaned = cleaned.replace(token, " ")
+    cleaned = cleaned.strip(" ：:，,。")
+    return f"{cleaned}信用卡" if cleaned and "信用卡" not in cleaned else cleaned or None
+
+
 def _infer_account_type(name: str) -> str:
     if "信用卡" in name or "花呗" in name or "白条" in name:
         return "credit_card"
@@ -830,6 +1201,52 @@ def _infer_account_type(name: str) -> str:
     if "卡" in name:
         return "debit_card"
     return "asset"
+
+
+def _detect_currency(text: str) -> str:
+    upper_text = text.upper()
+    for code, keywords in CURRENCY_KEYWORDS:
+        for keyword in keywords:
+            haystack = upper_text if keyword.isascii() else text
+            needle = keyword.upper() if keyword.isascii() else keyword
+            if needle in haystack:
+                return code
+    return "CNY"
+
+
+def _format_money(amount: float, currency: str) -> str:
+    return f"{amount:.2f} 元" if currency == "CNY" else f"{amount:.2f} {currency}"
+
+
+def _valid_month_day(day: int) -> bool:
+    return 1 <= day <= 31
+
+
+def _parse_weekday(text: str) -> int:
+    mapping = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "日": 7,
+        "天": 7,
+    }
+    return mapping[text[-1]]
+
+
+def _weekday_label(day: int) -> str:
+    labels = {
+        1: "周一",
+        2: "周二",
+        3: "周三",
+        4: "周四",
+        5: "周五",
+        6: "周六",
+        7: "周日",
+    }
+    return labels.get(day, "周一")
 
 
 def _normalize_budget_category(text: str) -> str:
