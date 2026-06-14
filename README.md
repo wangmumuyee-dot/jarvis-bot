@@ -9,6 +9,7 @@
 - SQLite 初始化
 - `processed_messages` 和 `ledger_entries` 表
 - 基础记账流水解析和查询
+- 财务网页工作台：`/finance`
 
 ## 快速开始
 
@@ -48,6 +49,7 @@ LLM_MODEL=gpt-4.1-mini
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_RESPONSES_PATH=/responses
 LLM_TIMEOUT_SECONDS=20
+WEB_AUTH_TOKEN=
 ```
 
 `ALLOWED_FEISHU_USER_IDS` 可以先留空用于本地调试；正式接飞书时建议填入你自己的飞书 user_id。
@@ -100,6 +102,26 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 curl http://127.0.0.1:8000/health
 ```
 
+财务网页：
+
+```text
+http://127.0.0.1:8000/finance
+```
+
+部署到 HTTPS 域名后，可在 iPhone Safari 中添加到主屏幕，作为 `Jarvis 财务` 独立窗口应用使用。
+
+如果要部署到自己的域名，建议配置 `WEB_AUTH_TOKEN`，并参考：
+
+```text
+docs/FINANCE_WEB_DOMAIN_DEPLOY.md
+```
+
+也可以先生成部署文件：
+
+```bash
+python scripts/prepare_finance_web_deploy.py finance.example.com --proxy caddy
+```
+
 ### 6. 飞书 webhook 地址
 
 本地服务启动后，需要用 cloudflared 或 ngrok 暴露 HTTPS 地址，然后在飞书应用事件订阅里配置：
@@ -125,6 +147,33 @@ https://xxx.trycloudflare.com/webhook/feishu
 ```
 
 ## 当前支持的文本
+
+## 财务网页工作台
+
+浏览器打开 `/finance` 后可以直接完成财务相关操作：
+
+- 快速结构化记账
+- 查看本月收入、支出、净额和待报销
+- 查看最近流水
+- 查看分类支出、预算、愿望储蓄和欠款
+- 用表单设置预算、记录欠款、维护愿望储蓄、保存模板、创建周期账单
+- 用表单管理账户余额、分类、信用卡账单日、财务周期和账单搜索
+- 直接上传 `.xlsx` 导入账单
+- 直接下载本月、全部、待报销或脱敏账单 Excel
+- 用批处理按钮执行月报、消费分析、同步等操作
+- 使用命令面板执行飞书同款指令
+- 部署到 HTTPS 后可作为 PWA 添加到 iPhone 主屏幕
+
+命令面板复用现有文本路由，所以飞书里支持的财务指令基本都能在网页中执行，例如：
+
+```text
+设置本月餐饮预算 2000
+本月分类统计
+有哪些欠款
+生成本月周期账单
+分析本月消费
+导出脱敏账单
+```
 
 ### ping
 

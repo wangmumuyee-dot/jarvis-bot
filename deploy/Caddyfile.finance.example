@@ -1,0 +1,12 @@
+# Replace finance.example.com with your domain.
+# Jarvis FastAPI should listen on 127.0.0.1:8000.
+
+finance.example.com {
+    encode gzip
+
+    # Optional: make the domain root open the finance workspace.
+    redir / /finance 302
+
+    reverse_proxy 127.0.0.1:8000
+}
+

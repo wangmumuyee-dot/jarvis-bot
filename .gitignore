@@ -17,3 +17,4 @@ data/*.xlsx
 data/backups/
 data/exports/
 logs/*.log
+deploy/generated/

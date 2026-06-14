@@ -1,0 +1,48 @@
+{
+  "id": "/finance",
+  "name": "Jarvis 财务工作台",
+  "short_name": "Jarvis 财务",
+  "description": "个人财务记录、预算、账单和导出工具。",
+  "start_url": "/finance",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "background_color": "#f6f4ef",
+  "theme_color": "#087f73",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/finance-static/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/finance-static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/finance-static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "快速记账",
+      "short_name": "记账",
+      "url": "/finance",
+      "icons": [
+        {
+          "src": "/finance-static/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

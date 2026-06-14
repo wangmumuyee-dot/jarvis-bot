@@ -8,7 +8,7 @@
 - IP：`43.156.64.102`
 - 系统：OpenCloudOS 9
 - 已有服务：OpenClaw 面板一键部署
-- 域名：暂无
+- 域名：已有域名时可直接部署财务网页，见 `docs/FINANCE_WEB_DOMAIN_DEPLOY.md`
 - Obsidian 同步：写入 Git 仓库
 
 第一版云部署采用：
@@ -25,17 +25,18 @@ Jarvis 作为独立 systemd 服务运行，不改 OpenClaw 的面板部署。
 
 ## 2. 重要限制
 
-当前没有域名，所以飞书 webhook 先使用 cloudflared quick tunnel。
+如果还没有完成域名解析，飞书 webhook 可以先使用 cloudflared quick tunnel。
 
 这能快速上线，但有一个限制：
 
 - 服务器或 cloudflared 重启后，`*.trycloudflare.com` 地址可能变化
 - 地址变化后，需要重新填飞书开放平台事件订阅地址
 
-长期稳定方案：
+已有域名后的长期稳定方案：
 
-- 绑定域名 + Nginx + HTTPS
+- 绑定域名 + Caddy/Nginx + HTTPS
 - 或 Cloudflare named tunnel
+- 财务网页入口：`https://你的域名/finance`
 
 ## 3. 推荐目录
 
@@ -99,6 +100,7 @@ APP_HOST=127.0.0.1
 APP_PORT=8000
 LOG_LEVEL=INFO
 REMINDER_SCAN_INTERVAL_SECONDS=60
+WEB_AUTH_TOKEN=财务网页访问口令，建议用 openssl rand -base64 32 生成
 
 DATABASE_PATH=/opt/jarvis-data/jarvis.db
 EXPORT_DIR=/opt/jarvis-data/exports
@@ -215,6 +217,32 @@ https://xxx.trycloudflare.com
 
 ```text
 https://xxx.trycloudflare.com/webhook/feishu
+```
+
+## 9.1 绑定域名和财务网页
+
+如果已经有域名，推荐把子域名反代到 Jarvis 服务：
+
+```text
+https://finance.example.com/finance -> http://127.0.0.1:8000/finance
+```
+
+完整步骤见：
+
+```text
+docs/FINANCE_WEB_DOMAIN_DEPLOY.md
+```
+
+域名部署后，飞书 webhook 也可以使用同一个域名：
+
+```text
+https://finance.example.com/webhook/feishu
+```
+
+公网部署财务网页前，请务必在 `/opt/jarvis-bot/.env` 设置：
+
+```text
+WEB_AUTH_TOKEN=一串足够长的随机口令
 ```
 
 ## 10. Obsidian Git 同步验证

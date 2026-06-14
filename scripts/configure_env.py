@@ -25,6 +25,7 @@ FIELDS = [
     ("LLM_RESPONSES_PATH", "Responses API 路径", "/responses", False),
     ("LLM_TIMEOUT_SECONDS", "大模型请求超时秒数", "20", False),
     ("REMINDER_SCAN_INTERVAL_SECONDS", "提醒扫描间隔秒数", "60", False),
+    ("WEB_AUTH_TOKEN", "财务网页访问口令，公网部署建议填写长随机值", "", True),
 ]
 
 
@@ -87,6 +88,7 @@ def _write_env(values: dict[str, str]) -> None:
                 "APP_PORT",
                 "LOG_LEVEL",
                 "REMINDER_SCAN_INTERVAL_SECONDS",
+                "WEB_AUTH_TOKEN",
             ],
         ),
         (

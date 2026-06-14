@@ -33,6 +33,7 @@ class Settings:
     database_path: Path
     export_dir: Path
     reminder_scan_interval_seconds: int
+    web_auth_token: str
     obsidian_vault_path: Path | None
     obsidian_git_sync_enabled: bool
     obsidian_git_push_enabled: bool
@@ -64,6 +65,7 @@ def get_settings() -> Settings:
         database_path=Path(os.getenv("DATABASE_PATH", "data/jarvis.db")),
         export_dir=Path(os.getenv("EXPORT_DIR", "data/exports")),
         reminder_scan_interval_seconds=int(os.getenv("REMINDER_SCAN_INTERVAL_SECONDS", "60")),
+        web_auth_token=os.getenv("WEB_AUTH_TOKEN", ""),
         obsidian_vault_path=Path(obsidian_path) if obsidian_path else None,
         obsidian_git_sync_enabled=_bool_env("OBSIDIAN_GIT_SYNC_ENABLED"),
         obsidian_git_push_enabled=_bool_env("OBSIDIAN_GIT_PUSH_ENABLED", True),

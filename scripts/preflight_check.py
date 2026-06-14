@@ -41,6 +41,7 @@ def run_checks() -> list[Check]:
         _check_cloudflared(),
         _check_feishu_env(settings),
         _check_llm_env(settings),
+        _check_web_auth(settings),
     ]
     checks.extend(_check_pmset())
     return checks
@@ -141,6 +142,14 @@ def _check_llm_env(settings) -> Check:
     if not settings.llm_api_key:
         return Check("LLM env", "WARN", "未配置 LLM_API_KEY，将使用本地规则 fallback")
     return Check("LLM env", "PASS", f"provider={settings.llm_provider}, model={settings.llm_model}")
+
+
+def _check_web_auth(settings) -> Check:
+    if settings.web_auth_token:
+        return Check("Finance web auth", "PASS", "WEB_AUTH_TOKEN 已配置")
+    if settings.app_env == "production":
+        return Check("Finance web auth", "WARN", "生产环境建议配置 WEB_AUTH_TOKEN，避免财务网页 API 裸露")
+    return Check("Finance web auth", "PASS", "开发环境未配置 WEB_AUTH_TOKEN")
 
 
 def _check_pmset() -> list[Check]:
