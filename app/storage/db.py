@@ -286,6 +286,56 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_notes_created_at
 ON knowledge_notes(created_at);
+
+CREATE TABLE IF NOT EXISTS health_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    sex TEXT,
+    age INTEGER,
+    height_cm REAL,
+    weight_kg REAL,
+    goal TEXT NOT NULL DEFAULT '',
+    workout_days_per_week INTEGER,
+    equipment TEXT NOT NULL DEFAULT '',
+    injuries TEXT NOT NULL DEFAULT '',
+    diet_preferences TEXT NOT NULL DEFAULT '',
+    source_text TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS health_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_type TEXT NOT NULL CHECK (
+        plan_type IN ('workout', 'meal')
+    ),
+    title TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_plans_type_start
+ON health_plans(plan_type, start_date);
+
+CREATE TABLE IF NOT EXISTS health_checkins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    checkin_date TEXT NOT NULL,
+    weight_kg REAL,
+    sleep_hours REAL,
+    workout_done TEXT NOT NULL DEFAULT '',
+    meal_notes TEXT NOT NULL DEFAULT '',
+    fatigue_level INTEGER,
+    mood TEXT NOT NULL DEFAULT '',
+    source_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_checkins_date
+ON health_checkins(checkin_date);
 """
 
 
