@@ -39,6 +39,7 @@ const viewTitles = {
   budget: "预算",
   debt: "欠款",
   saving: "愿望",
+  accounts: "账户",
   tools: "工具",
   command: "命令",
 };
@@ -346,22 +347,28 @@ async function submitImportTool(event) {
 async function submitAccountTool(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
-  const action = data.get("action");
-  const account = String(data.get("account") || "").trim();
-  const amount = Number(data.get("amount"));
-  if (!account) {
-    toast("请填写账户");
+  const payload = {
+    name: String(data.get("name") || "").trim(),
+    account_type: data.get("account_type") || "asset",
+    currency: data.get("currency") || "CNY",
+    opening_balance: Number(data.get("opening_balance") || 0),
+  };
+  if (!payload.name) {
+    toast("请填写账户名");
     return;
   }
-  if (action === "opening") {
-    if (Number.isNaN(amount)) {
-      toast("请填写初始余额");
-      return;
-    }
-    await executeCommand(`设置${account}初始余额 ${amount}`);
+  if (Number.isNaN(payload.opening_balance)) {
+    toast("请填写有效余额");
     return;
   }
-  await executeCommand(`${account}余额多少`);
+  try {
+    const result = await postJson("/api/finance/accounts", payload);
+    showReply(result.reply);
+    await refreshAll();
+    setActiveView("accounts");
+  } catch (error) {
+    showReply(`账户保存失败：${error.message}`);
+  }
 }
 
 async function submitCategoryTool(event) {
@@ -434,6 +441,9 @@ async function executeCommand(text) {
 
 function renderOptions(options) {
   fillSelect("currencySelect", options.currencies || state.options.currencies, "CNY");
+  document.querySelectorAll(".account-currency-select").forEach((node) => {
+    fillSelectElement(node, options.currencies || state.options.currencies, "CNY");
+  });
   fillDatalist(
     "categoryList",
     (options.categories || []).map((item) => item.label || item.name),
@@ -442,8 +452,14 @@ function renderOptions(options) {
     "accountList",
     (options.accounts || []).map((item) => item.name),
   );
+  fillAccountSelect("accountSelect", options.accounts || [], "默认账户", false);
+  fillAccountSelect("transferAccountSelect", options.accounts || [], "", true);
+  document.querySelectorAll(".account-select").forEach((node) => {
+    fillAccountSelectElement(node, options.accounts || [], node.value || "默认账户", false);
+  });
   fillDatalist("bookList", options.books || []);
   renderTemplateActions(options.templates || []);
+  renderAccounts(options.accounts || []);
 }
 
 function renderDashboard(data) {
@@ -563,6 +579,42 @@ function renderDebts(items) {
       `;
     })
     .join("");
+}
+
+function renderAccounts(items) {
+  const node = document.getElementById("accountManageList");
+  if (!node) {
+    return;
+  }
+  if (!items.length) {
+    node.innerHTML = `<div class="empty-state">暂无账户</div>`;
+    return;
+  }
+  node.innerHTML = items
+    .map((item) => `
+      <button class="account-item" type="button" data-account-name="${escapeAttr(item.name)}">
+        <span>
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>${escapeHtml(accountTypeLabel(item.account_type))} · 初始 ${escapeHtml(money(item.opening_balance, item.currency))}</small>
+        </span>
+        <b>${escapeHtml(money(item.balance, item.currency))}</b>
+      </button>
+    `)
+    .join("");
+
+  node.querySelectorAll("[data-account-name]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const account = items.find((item) => item.name === button.dataset.accountName);
+      if (!account) {
+        return;
+      }
+      const form = document.getElementById("accountToolForm");
+      form.elements.name.value = account.name;
+      form.elements.account_type.value = account.account_type;
+      form.elements.currency.value = account.currency;
+      form.elements.opening_balance.value = account.opening_balance;
+    });
+  });
 }
 
 function renderQuickActions() {
@@ -719,9 +771,31 @@ async function readJsonResponse(response) {
 
 function fillSelect(id, values, selected) {
   const node = document.getElementById(id);
+  fillSelectElement(node, values, selected);
+}
+
+function fillSelectElement(node, values, selected) {
   node.innerHTML = values
     .map((value) => `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`)
     .join("");
+}
+
+function fillAccountSelect(id, accounts, selected, includeEmpty) {
+  fillAccountSelectElement(document.getElementById(id), accounts, selected, includeEmpty);
+}
+
+function fillAccountSelectElement(node, accounts, selected, includeEmpty) {
+  const current = selected || node.value || "";
+  const options = accounts.map((account) => account.name);
+  if (current && !options.includes(current)) {
+    options.unshift(current);
+  }
+  const emptyOption = includeEmpty ? `<option value="">不选择</option>` : "";
+  node.innerHTML =
+    emptyOption +
+    options
+      .map((name) => `<option value="${escapeAttr(name)}" ${name === current ? "selected" : ""}>${escapeHtml(name)}</option>`)
+      .join("");
 }
 
 function fillDatalist(id, values) {
@@ -768,6 +842,19 @@ function money(value, currency = "CNY") {
     return `¥${amount.toFixed(2)}`;
   }
   return `${amount.toFixed(2)} ${currency}`;
+}
+
+function accountTypeLabel(value) {
+  const labels = {
+    asset: "资产账户",
+    cash: "现金",
+    debit_card: "储蓄卡",
+    credit_card: "信用卡",
+    wallet: "钱包",
+    liability: "负债",
+    other: "其他",
+  };
+  return labels[value] || value || "账户";
 }
 
 function datePart(value) {

@@ -49,6 +49,38 @@ class FinanceWebServiceTest(unittest.TestCase):
             self.assertEqual(entries[0]["note"], "网页午饭")
             self.assertEqual(entries[0]["tags"], ["web"])
 
+    def test_upsert_account_returns_balances_for_web_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            ledger = LedgerService(db)
+            service = FinanceWebService(db, ledger)
+
+            saved = service.upsert_account(
+                name="招商储蓄卡",
+                account_type="debit_card",
+                currency="CNY",
+                opening_balance=1000,
+            )
+            self.assertIn("已保存账户", saved["reply"])
+
+            service.create_entry(
+                FinanceEntryInput(
+                    entry_type="expense",
+                    amount=38,
+                    currency="CNY",
+                    category="餐饮",
+                    note="午饭",
+                    account="招商储蓄卡",
+                )
+            )
+
+            accounts = service.options()["accounts"]
+            account = next(item for item in accounts if item["name"] == "招商储蓄卡")
+            self.assertEqual(account["account_type"], "debit_card")
+            self.assertEqual(account["opening_balance"], 1000)
+            self.assertEqual(account["balance"], 962)
+
     def test_web_token_guard_rejects_missing_token_when_configured(self) -> None:
         import app.main as main
 
@@ -117,6 +149,28 @@ class FinanceWebServiceTest(unittest.TestCase):
                 main.ledger_service = original_ledger
                 main.export_service = original_export
                 main.finance_p2_service = original_p2
+
+    def test_account_endpoint_saves_account(self) -> None:
+        import app.main as main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = FinanceWebService(db, LedgerService(db))
+            original_service = main.finance_web_service
+            main.finance_web_service = service
+            try:
+                payload = main.FinanceAccountRequest(
+                    name="现金",
+                    account_type="cash",
+                    currency="CNY",
+                    opening_balance=200,
+                )
+                result = main.finance_upsert_account(payload)
+                self.assertEqual(result["account"]["name"], "现金")
+                self.assertEqual(result["account"]["balance"], 200)
+            finally:
+                main.finance_web_service = original_service
 
     def test_pwa_assets_are_available_for_installation(self) -> None:
         import app.main as main

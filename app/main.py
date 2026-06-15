@@ -110,6 +110,16 @@ class FinanceImportRequest(BaseModel):
     content_base64: str = Field(min_length=1)
 
 
+class FinanceAccountRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    account_type: str = Field(
+        default="asset",
+        pattern="^(asset|cash|debit_card|credit_card|wallet|liability|other)$",
+    )
+    currency: str = Field(default="CNY", pattern="^(CNY|USD|HKD|JPY|EUR)$")
+    opening_balance: float = Field(default=0)
+
+
 def _verify_finance_web_access(
     x_jarvis_web_token: Optional[str] = Header(default=None),
 ) -> None:
@@ -197,6 +207,22 @@ def finance_command(
     _access: None = Depends(_verify_finance_web_access),
 ) -> dict[str, str]:
     return {"reply": route_text(payload.text)}
+
+
+@app.post("/api/finance/accounts")
+def finance_upsert_account(
+    payload: FinanceAccountRequest,
+    _access: None = Depends(_verify_finance_web_access),
+) -> dict[str, Any]:
+    try:
+        return finance_web_service.upsert_account(
+            name=payload.name,
+            account_type=payload.account_type,
+            currency=payload.currency,
+            opening_balance=payload.opening_balance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/finance/export")

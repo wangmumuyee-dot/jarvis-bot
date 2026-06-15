@@ -174,7 +174,7 @@ class FinanceWebService:
             ).fetchall()
             account_rows = conn.execute(
                 """
-                SELECT name, account_type, currency
+                SELECT id, name, account_type, currency, opening_balance, statement_day, repayment_day
                 FROM ledger_accounts
                 WHERE status = 'active'
                 ORDER BY updated_at DESC, name
@@ -196,6 +196,19 @@ class FinanceWebService:
                 LIMIT 12
                 """
             ).fetchall()
+            account_items = [
+                {
+                    "id": int(row["id"]),
+                    "name": row["name"],
+                    "account_type": row["account_type"],
+                    "currency": row["currency"],
+                    "opening_balance": float(row["opening_balance"]),
+                    "balance": _account_balance(conn, int(row["id"]), float(row["opening_balance"])),
+                    "statement_day": row["statement_day"],
+                    "repayment_day": row["repayment_day"],
+                }
+                for row in account_rows
+            ]
 
         return {
             "entry_types": [
@@ -215,7 +228,7 @@ class FinanceWebService:
                 }
                 for row in category_rows
             ],
-            "accounts": [dict(row) for row in account_rows],
+            "accounts": account_items,
             "books": [row["name"] for row in book_rows],
             "templates": [dict(row) for row in template_rows],
         }
@@ -312,6 +325,45 @@ class FinanceWebService:
             },
         }
 
+    def upsert_account(self, *, name: str, account_type: str, currency: str, opening_balance: float) -> dict[str, Any]:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("账户名不能为空")
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ledger_accounts (name, account_type, currency, opening_balance)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(name)
+                DO UPDATE SET account_type = excluded.account_type,
+                    currency = excluded.currency,
+                    opening_balance = excluded.opening_balance,
+                    status = 'active',
+                    updated_at = datetime('now')
+                """,
+                (normalized_name, account_type, currency, opening_balance),
+            )
+            row = conn.execute(
+                """
+                SELECT id, name, account_type, currency, opening_balance, statement_day, repayment_day
+                FROM ledger_accounts
+                WHERE name = ?
+                """,
+                (normalized_name,),
+            ).fetchone()
+            balance = _account_balance(conn, int(row["id"]), float(row["opening_balance"]))
+        account = {
+            "id": int(row["id"]),
+            "name": row["name"],
+            "account_type": row["account_type"],
+            "currency": row["currency"],
+            "opening_balance": float(row["opening_balance"]),
+            "balance": balance,
+            "statement_day": row["statement_day"],
+            "repayment_day": row["repayment_day"],
+        }
+        return {"reply": f"已保存账户：{normalized_name}，当前余额 {balance:.2f} {currency}。", "account": account}
+
 
 def _parse_occurred_at(value: str | None) -> datetime:
     if not value:
@@ -328,6 +380,32 @@ def _progress(current: float, target: float) -> float:
     if target <= 0:
         return 0
     return round(max(0, current) / target * 100, 1)
+
+
+def _account_balance(conn: Any, account_id: int, opening_balance: float) -> float:
+    outgoing = conn.execute(
+        """
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN entry_type IN ('income', 'refund', 'reimbursement') THEN amount
+                WHEN entry_type IN ('expense', 'transfer') THEN -amount
+                ELSE 0
+            END
+        ), 0) AS total
+        FROM ledger_entries
+        WHERE account_id = ?
+        """,
+        (account_id,),
+    ).fetchone()
+    incoming_transfer = conn.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM ledger_entries
+        WHERE entry_type = 'transfer' AND transfer_to_account_id = ?
+        """,
+        (account_id,),
+    ).fetchone()
+    return opening_balance + float(outgoing["total"]) + float(incoming_transfer["total"])
 
 
 def _source_text(item: FinanceEntryInput, occurred_at: datetime) -> str:
@@ -355,4 +433,3 @@ def _entry_reply(entry_id: int, draft: LedgerEntryDraft, warning: str | None) ->
         f"类型：{_type_label(draft.entry_type)}，分类：{draft.category}，"
         f"账户：{draft.account}{transfer}，备注：{draft.note}{tags}。{warning_text}"
     )
-

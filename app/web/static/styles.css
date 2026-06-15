@@ -533,7 +533,8 @@ tbody tr:last-child td {
 
 .progress-list,
 .category-bars,
-.compact-list {
+.compact-list,
+.account-list {
   display: grid;
   gap: 12px;
 }
@@ -564,6 +565,48 @@ tbody tr:last-child td {
 .row-between strong,
 .row-between span {
   overflow-wrap: anywhere;
+}
+
+.account-list {
+  margin-top: 14px;
+}
+
+.account-item {
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  text-align: left;
+}
+
+.account-item span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.account-item strong,
+.account-item b,
+.account-item small {
+  overflow-wrap: anywhere;
+}
+
+.account-item small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.account-item b {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .bar-track {
