@@ -17,9 +17,14 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Personal Jarvis</p>
-          <h1>财务工作台</h1>
+        <div class="topbar-title">
+          <button class="icon-button menu-button" id="menuButton" type="button" title="打开菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="sideMenu">
+            <span aria-hidden="true">☰</span>
+          </button>
+          <div>
+            <p class="eyebrow">Personal Jarvis</p>
+            <h1 id="viewTitle">记账</h1>
+          </div>
         </div>
         <div class="topbar-actions">
           <button class="icon-button" id="authButton" type="button" title="访问口令" aria-label="访问口令">
@@ -31,8 +36,26 @@
         </div>
       </header>
 
+      <div class="menu-backdrop hidden" id="menuBackdrop"></div>
+      <nav class="side-menu hidden" id="sideMenu" aria-label="财务功能菜单">
+        <div class="menu-head">
+          <strong>Jarvis 财务</strong>
+          <button class="icon-button" id="closeMenuButton" type="button" title="关闭菜单" aria-label="关闭菜单">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <button class="menu-item active" type="button" data-view-target="record">记账</button>
+        <button class="menu-item" type="button" data-view-target="entries">流水</button>
+        <button class="menu-item" type="button" data-view-target="insights">洞察</button>
+        <button class="menu-item" type="button" data-view-target="budget">预算</button>
+        <button class="menu-item" type="button" data-view-target="debt">欠款</button>
+        <button class="menu-item" type="button" data-view-target="saving">愿望</button>
+        <button class="menu-item" type="button" data-view-target="tools">工具</button>
+        <button class="menu-item" type="button" data-view-target="command">命令</button>
+      </nav>
+
       <main class="workspace">
-        <section class="summary-grid" aria-label="本月概览">
+        <section class="summary-grid" aria-label="本月概览" data-view-panel="record insights">
           <article class="metric income">
             <span class="metric-label">本月收入</span>
             <strong id="incomeMetric">--</strong>
@@ -52,7 +75,7 @@
         </section>
 
         <section class="primary-grid">
-          <div class="panel entry-panel">
+          <div class="panel entry-panel" data-view-panel="record">
             <div class="panel-head">
               <h2>快速记账</h2>
               <span id="periodLabel" class="soft-label">--</span>
@@ -124,7 +147,7 @@
             </form>
           </div>
 
-          <div class="panel command-panel">
+          <div class="panel command-panel" data-view-panel="command">
             <div class="panel-head">
               <h2>命令</h2>
               <span class="soft-label">复用飞书指令</span>
@@ -139,7 +162,7 @@
         </section>
 
         <section class="tools-grid" aria-label="财务工具">
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="budget">
             <div class="panel-head">
               <h2>预算</h2>
               <button class="text-button" data-command="这个月餐饮还剩多少预算？" type="button">查询</button>
@@ -157,7 +180,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="debt">
             <div class="panel-head">
               <h2>欠款</h2>
               <button class="text-button" data-command="有哪些欠款" type="button">列表</button>
@@ -184,7 +207,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="saving">
             <div class="panel-head">
               <h2>愿望</h2>
               <button class="text-button" data-command="查看愿望清单" type="button">清单</button>
@@ -210,7 +233,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>模板</h2>
               <button class="text-button" data-command="查看快捷模板列表" type="button">列表</button>
@@ -228,7 +251,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>周期</h2>
               <button class="text-button" data-command="生成本月周期账单" type="button">生成</button>
@@ -250,7 +273,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>批处理</h2>
               <button class="text-button" data-command="同步状态" type="button">同步</button>
@@ -273,7 +296,7 @@
             </div>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>账户</h2>
               <button class="text-button" data-command="默认账户余额多少" type="button">余额</button>
@@ -298,7 +321,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>分类</h2>
               <button class="text-button" data-command="有哪些分类" type="button">列表</button>
@@ -323,7 +346,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>信用卡</h2>
               <button class="text-button" data-command="信用卡还款日" type="button">查询</button>
@@ -345,7 +368,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools">
             <div class="panel-head">
               <h2>周期设置</h2>
               <button class="text-button" data-command="财务周期设置" type="button">查看</button>
@@ -372,7 +395,7 @@
             </form>
           </div>
 
-          <div class="panel tool-panel">
+          <div class="panel tool-panel" data-view-panel="tools entries">
             <div class="panel-head">
               <h2>搜索</h2>
               <button class="text-button" data-command="本月账单日历" type="button">日历</button>
@@ -388,7 +411,7 @@
         </section>
 
         <section class="detail-grid">
-          <div class="panel entries-panel">
+          <div class="panel entries-panel" data-view-panel="entries">
             <div class="panel-head">
               <h2>最近流水</h2>
               <span class="soft-label" id="entryCountLabel">--</span>
@@ -411,7 +434,7 @@
           </div>
 
           <aside class="side-stack">
-            <div class="panel">
+            <div class="panel" data-view-panel="budget insights">
               <div class="panel-head">
                 <h2>预算</h2>
                 <button class="text-button" data-command="设置本月餐饮预算 2000" type="button">设置</button>
@@ -419,7 +442,7 @@
               <div id="budgetList" class="progress-list"></div>
             </div>
 
-            <div class="panel">
+            <div class="panel" data-view-panel="insights">
               <div class="panel-head">
                 <h2>分类</h2>
                 <button class="text-button" data-command="本月分类统计" type="button">统计</button>
@@ -427,7 +450,7 @@
               <div id="categoryListPanel" class="category-bars"></div>
             </div>
 
-            <div class="panel">
+            <div class="panel" data-view-panel="saving insights">
               <div class="panel-head">
                 <h2>愿望</h2>
                 <button class="text-button" data-command="查看愿望清单" type="button">查看</button>
@@ -435,7 +458,7 @@
               <div id="savingList" class="progress-list"></div>
             </div>
 
-            <div class="panel">
+            <div class="panel" data-view-panel="debt insights">
               <div class="panel-head">
                 <h2>欠款</h2>
                 <button class="text-button" data-command="有哪些欠款" type="button">查询</button>

@@ -58,6 +58,13 @@ button {
   margin-bottom: 20px;
 }
 
+.topbar-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted);
@@ -103,6 +110,61 @@ h2 {
   font-size: 20px;
 }
 
+.menu-button {
+  flex: 0 0 auto;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  background: rgba(32, 33, 36, 0.28);
+}
+
+.side-menu {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 9;
+  width: min(320px, calc(100vw - 40px));
+  display: grid;
+  grid-auto-rows: min-content;
+  gap: 6px;
+  padding: max(18px, env(safe-area-inset-top)) 14px 18px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 18px 0 42px rgba(32, 33, 36, 0.16);
+}
+
+.menu-head {
+  min-height: 44px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.menu-head strong {
+  font-size: 18px;
+}
+
+.menu-item {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 800;
+  text-align: left;
+}
+
+.menu-item.active {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
 .text-button {
   padding: 0 12px;
   color: var(--teal);
@@ -145,6 +207,26 @@ h2 {
 
 .workspace > * {
   min-width: 0;
+}
+
+.view-container-hidden {
+  display: none !important;
+}
+
+[data-view-panel] {
+  display: none !important;
+}
+
+[data-view-panel].active-view {
+  display: block !important;
+}
+
+.summary-grid.active-view,
+.primary-grid.active-view,
+.tools-grid.active-view,
+.detail-grid.active-view,
+.side-stack.active-view {
+  display: grid !important;
 }
 
 .summary-grid {

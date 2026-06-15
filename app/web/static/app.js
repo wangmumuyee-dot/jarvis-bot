@@ -31,6 +31,17 @@ const typeDefaults = {
 };
 
 const authStorageKey = "jarvisFinanceWebToken";
+const viewStorageKey = "jarvisFinanceActiveView";
+const viewTitles = {
+  record: "记账",
+  entries: "流水",
+  insights: "洞察",
+  budget: "预算",
+  debt: "欠款",
+  saving: "愿望",
+  tools: "工具",
+  command: "命令",
+};
 let pendingAuthResolve = null;
 let pendingAuthPromise = null;
 
@@ -38,6 +49,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   setToday();
   renderQuickActions();
+  setActiveView(localStorage.getItem(viewStorageKey) || "record");
   refreshAll();
 });
 
@@ -50,10 +62,20 @@ if ("serviceWorker" in navigator) {
 }
 
 function bindEvents() {
+  document.getElementById("menuButton").addEventListener("click", openMenu);
+  document.getElementById("closeMenuButton").addEventListener("click", closeMenu);
+  document.getElementById("menuBackdrop").addEventListener("click", closeMenu);
   document.getElementById("refreshButton").addEventListener("click", refreshAll);
   document.getElementById("authButton").addEventListener("click", () => showAuthOverlay());
   document.getElementById("authForm").addEventListener("submit", submitAuthToken);
   document.getElementById("clearAuthButton").addEventListener("click", clearAuthToken);
+
+  document.querySelectorAll("[data-view-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveView(button.dataset.viewTarget || "record");
+      closeMenu();
+    });
+  });
 
   document.querySelectorAll("#entryTypeGroup .segment").forEach((button) => {
     button.addEventListener("click", () => {
@@ -93,13 +115,44 @@ function bindEvents() {
       downloadExport(target.dataset.exportScope, target.dataset.exportRedact === "true");
       return;
     }
-    if (target.closest(".button-grid")) {
+    if (target.closest(".button-grid") || document.body.dataset.currentView !== "command") {
+      setActiveView("command");
       executeCommand(target.dataset.command);
       return;
     }
     document.getElementById("commandText").value = target.dataset.command;
     document.getElementById("commandText").focus();
   });
+}
+
+function openMenu() {
+  document.getElementById("sideMenu").classList.remove("hidden");
+  document.getElementById("menuBackdrop").classList.remove("hidden");
+  document.getElementById("menuButton").setAttribute("aria-expanded", "true");
+}
+
+function closeMenu() {
+  document.getElementById("sideMenu").classList.add("hidden");
+  document.getElementById("menuBackdrop").classList.add("hidden");
+  document.getElementById("menuButton").setAttribute("aria-expanded", "false");
+}
+
+function setActiveView(view) {
+  const nextView = viewTitles[view] ? view : "record";
+  localStorage.setItem(viewStorageKey, nextView);
+  document.body.dataset.currentView = nextView;
+  document.getElementById("viewTitle").textContent = viewTitles[nextView];
+  document.querySelectorAll("[data-view-target]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.viewTarget === nextView);
+  });
+  document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+    const views = (panel.dataset.viewPanel || "").split(/\s+/);
+    panel.classList.toggle("active-view", views.includes(nextView));
+  });
+  document.querySelectorAll(".primary-grid, .tools-grid, .detail-grid").forEach((container) => {
+    container.classList.toggle("view-container-hidden", !container.querySelector("[data-view-panel].active-view"));
+  });
+  window.scrollTo({ top: 0, behavior: "auto" });
 }
 
 function setToday() {
