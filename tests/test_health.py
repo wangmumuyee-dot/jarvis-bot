@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -80,6 +80,28 @@ class HealthServiceTest(unittest.TestCase):
         assert query is not None
         self.assertIn("今日健康打卡", query)
         self.assertIn("睡眠 7h", query)
+
+    def test_bowel_movement_record_and_month_summary(self) -> None:
+        reply = self.service.create_bowel_movement_from_text("拉屎", now=datetime(2026, 6, 4, 9, 30))
+
+        assert reply is not None
+        self.assertIn("已记录拉屎", reply)
+        self.assertIn("本月 1 次", reply)
+
+        summary = self.service.bowel_month_summary(2026, 6)
+        self.assertEqual(summary["total_count"], 1)
+        self.assertEqual(summary["active_days"], 1)
+        self.assertEqual(summary["days"][3]["count"], 1)
+        self.assertEqual(summary["recent"][0]["occurred_at_text"], "2026-06-04 09:30")
+
+    def test_bowel_query_does_not_create_record(self) -> None:
+        now = datetime.now().replace(hour=21, minute=0, second=0, microsecond=0)
+        self.service.create_bowel_movement_from_text("拉屎两次", now=now)
+
+        query = handle_health_text("这个月拉屎情况", self.service)
+        assert query is not None
+        self.assertIn("拉屎情况", query)
+        self.assertEqual(self.service.bowel_month_summary(now.year, now.month)["total_count"], 2)
 
     def test_health_module_does_not_swallow_ledger_expense(self) -> None:
         ledger = LedgerService(self.db)

@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#087f73" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Jarvis 财务" />
+    <meta name="apple-mobile-web-app-title" content="Jarvis" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <title>Jarvis 财务</title>
+    <title>Jarvis 生活工作台</title>
     <link rel="manifest" href="/finance-static/manifest.webmanifest" />
     <link rel="icon" href="/finance-static/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="/finance-static/icons/apple-touch-icon.png" />
@@ -39,7 +39,7 @@
       <div class="menu-backdrop hidden" id="menuBackdrop"></div>
       <nav class="side-menu hidden" id="sideMenu" aria-label="财务功能菜单">
         <div class="menu-head">
-          <strong>Jarvis 财务</strong>
+          <strong>Jarvis</strong>
           <button class="icon-button" id="closeMenuButton" type="button" title="关闭菜单" aria-label="关闭菜单">
             <span aria-hidden="true">×</span>
           </button>
@@ -47,6 +47,7 @@
         <button class="menu-item active" type="button" data-view-target="record">记账</button>
         <button class="menu-item" type="button" data-view-target="entries">流水</button>
         <button class="menu-item" type="button" data-view-target="insights">洞察</button>
+        <button class="menu-item" type="button" data-view-target="bowel">排便</button>
         <button class="menu-item" type="button" data-view-target="budget">预算</button>
         <button class="menu-item" type="button" data-view-target="debt">欠款</button>
         <button class="menu-item" type="button" data-view-target="saving">愿望</button>
@@ -72,6 +73,25 @@
           <article class="metric reimburse">
             <span class="metric-label">待报销</span>
             <strong id="reimburseMetric">--</strong>
+          </article>
+        </section>
+
+        <section class="summary-grid" aria-label="排便月度概览" data-view-panel="bowel">
+          <article class="metric bowel">
+            <span class="metric-label">本月次数</span>
+            <strong id="bowelTotalMetric">--</strong>
+          </article>
+          <article class="metric bowel-active">
+            <span class="metric-label">记录天数</span>
+            <strong id="bowelActiveDaysMetric">--</strong>
+          </article>
+          <article class="metric bowel-average">
+            <span class="metric-label">记录日均</span>
+            <strong id="bowelAverageMetric">--</strong>
+          </article>
+          <article class="metric bowel-action">
+            <span class="metric-label">快捷记录</span>
+            <button class="primary-button" id="logBowelButton" type="button">记录拉屎</button>
           </article>
         </section>
 
@@ -160,6 +180,29 @@
             <div class="quick-actions" id="quickActions"></div>
             <pre id="replyBox" class="reply-box">等待操作</pre>
           </div>
+        </section>
+
+        <section class="detail-grid">
+          <div class="panel bowel-panel" data-view-panel="bowel">
+            <div class="panel-head">
+              <h2>月历</h2>
+              <label class="inline-month">
+                <span id="bowelPeriodLabel">--</span>
+                <input id="bowelMonth" type="month" />
+              </label>
+            </div>
+            <div id="bowelCalendar" class="bowel-calendar"></div>
+          </div>
+
+          <aside class="side-stack">
+            <div class="panel" data-view-panel="bowel">
+              <div class="panel-head">
+                <h2>最近</h2>
+                <button class="text-button" data-command="这个月拉屎情况" type="button">查询</button>
+              </div>
+              <div id="bowelRecentList" class="compact-list"></div>
+            </div>
+          </aside>
         </section>
 
         <section class="tools-grid" aria-label="财务工具">
@@ -300,12 +343,18 @@
           <div class="panel tool-panel" data-view-panel="accounts">
             <div class="panel-head">
               <h2>账户</h2>
-              <button class="text-button" data-command="默认账户余额多少" type="button">余额</button>
+              <button class="text-button" id="newAccountButton" type="button">新增</button>
             </div>
-            <form id="accountToolForm" class="tool-form">
+            <div id="accountManageList" class="account-list"></div>
+            <form id="accountToolForm" class="tool-form account-editor hidden">
+              <input name="id" type="hidden" />
+              <div class="editor-head span-2">
+                <h3 id="accountEditorTitle">新增账户</h3>
+                <button class="text-button" id="cancelAccountEditButton" type="button">取消</button>
+              </div>
               <label>
                 <span>账户名</span>
-                <input name="name" list="accountList" value="默认账户" required />
+                <input name="name" list="accountList" required />
               </label>
               <label>
                 <span>类型</span>
@@ -327,9 +376,11 @@
                 <span>初始余额</span>
                 <input name="opening_balance" type="number" step="0.01" placeholder="1000" />
               </label>
-              <button class="secondary-button span-2" type="submit">保存账户</button>
+              <div class="editor-actions span-2">
+                <button class="secondary-button danger-button hidden" id="deleteAccountButton" type="button">删除账户</button>
+                <button class="secondary-button" type="submit">保存账户</button>
+              </div>
             </form>
-            <div id="accountManageList" class="account-list"></div>
           </div>
 
           <div class="panel tool-panel" data-view-panel="tools">

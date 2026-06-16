@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -111,6 +112,7 @@ class FinanceImportRequest(BaseModel):
 
 
 class FinanceAccountRequest(BaseModel):
+    id: Optional[int] = None
     name: str = Field(min_length=1, max_length=40)
     account_type: str = Field(
         default="asset",
@@ -170,6 +172,19 @@ def finance_dashboard(_access: None = Depends(_verify_finance_web_access)) -> di
     return finance_web_service.dashboard()
 
 
+@app.get("/api/health/bowel")
+def health_bowel_month(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    _access: None = Depends(_verify_finance_web_access),
+) -> dict[str, Any]:
+    today = date.today()
+    try:
+        return health_service.bowel_month_summary(year or today.year, month or today.month)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/finance/options")
 def finance_options(_access: None = Depends(_verify_finance_web_access)) -> dict[str, Any]:
     return finance_web_service.options()
@@ -216,11 +231,23 @@ def finance_upsert_account(
 ) -> dict[str, Any]:
     try:
         return finance_web_service.upsert_account(
+            account_id=payload.id,
             name=payload.name,
             account_type=payload.account_type,
             currency=payload.currency,
             opening_balance=payload.opening_balance,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/finance/accounts/{account_id}")
+def finance_delete_account(
+    account_id: int,
+    _access: None = Depends(_verify_finance_web_access),
+) -> dict[str, str]:
+    try:
+        return finance_web_service.delete_account(account_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

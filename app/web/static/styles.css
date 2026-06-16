@@ -280,6 +280,22 @@ h2 {
   border-top: 4px solid var(--amber);
 }
 
+.metric.bowel {
+  border-top: 4px solid var(--teal);
+}
+
+.metric.bowel-active {
+  border-top: 4px solid var(--indigo);
+}
+
+.metric.bowel-average {
+  border-top: 4px solid var(--green);
+}
+
+.metric.bowel-action {
+  border-top: 4px solid var(--rose);
+}
+
 .primary-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
@@ -568,7 +584,7 @@ tbody tr:last-child td {
 }
 
 .account-list {
-  margin-top: 14px;
+  margin-bottom: 14px;
 }
 
 .account-item {
@@ -607,6 +623,108 @@ tbody tr:last-child td {
 .account-item b {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+
+.account-editor {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.editor-head {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-head h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.editor-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+}
+
+.danger-button {
+  border-color: var(--rose);
+  background: var(--rose-soft);
+  color: var(--rose);
+}
+
+.inline-month {
+  width: min(220px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.inline-month input {
+  min-height: 38px;
+}
+
+.bowel-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bowel-calendar > b {
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bowel-day {
+  min-height: 86px;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.bowel-day.empty {
+  border-color: transparent;
+  background: transparent;
+}
+
+.bowel-day span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.bowel-day strong {
+  min-height: 22px;
+  color: var(--ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.bowel-day.low {
+  border-color: rgba(8, 127, 115, 0.42);
+  background: var(--teal-soft);
+}
+
+.bowel-day.medium {
+  border-color: rgba(47, 125, 79, 0.48);
+  background: #ddf0e3;
+}
+
+.bowel-day.high {
+  border-color: rgba(166, 106, 0, 0.52);
+  background: var(--amber-soft);
 }
 
 .bar-track {

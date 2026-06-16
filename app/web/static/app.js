@@ -7,6 +7,8 @@ const state = {
     templates: [],
   },
   dashboard: null,
+  bowel: null,
+  accountEditorMode: "closed",
 };
 
 const quickCommands = [
@@ -18,6 +20,8 @@ const quickCommands = [
   "查看愿望清单",
   "分析本月消费",
   "导出本月账单",
+  "拉屎",
+  "这个月拉屎情况",
   "导出脱敏账单",
   "同步状态",
 ];
@@ -36,6 +40,7 @@ const viewTitles = {
   record: "记账",
   entries: "流水",
   insights: "洞察",
+  bowel: "排便",
   budget: "预算",
   debt: "欠款",
   saving: "愿望",
@@ -50,7 +55,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   setToday();
   renderQuickActions();
-  setActiveView(localStorage.getItem(viewStorageKey) || "record");
+  const hashView = window.location.hash.replace(/^#/, "");
+  setActiveView(viewTitles[hashView] ? hashView : localStorage.getItem(viewStorageKey) || "record");
   refreshAll();
 });
 
@@ -99,9 +105,17 @@ function bindEvents() {
   document.getElementById("debtToolForm").addEventListener("submit", submitDebtTool);
   document.getElementById("savingToolForm").addEventListener("submit", submitSavingTool);
   document.getElementById("templateToolForm").addEventListener("submit", submitTemplateTool);
+  document.getElementById("bowelMonth").addEventListener("change", refreshBowel);
+  document.getElementById("logBowelButton").addEventListener("click", async () => {
+    await executeCommand("拉屎");
+    await refreshBowel();
+  });
   document.getElementById("recurringToolForm").addEventListener("submit", submitRecurringTool);
   document.getElementById("importToolForm").addEventListener("submit", submitImportTool);
   document.getElementById("accountToolForm").addEventListener("submit", submitAccountTool);
+  document.getElementById("newAccountButton").addEventListener("click", startNewAccount);
+  document.getElementById("cancelAccountEditButton").addEventListener("click", closeAccountEditor);
+  document.getElementById("deleteAccountButton").addEventListener("click", deleteSelectedAccount);
   document.getElementById("categoryToolForm").addEventListener("submit", submitCategoryTool);
   document.getElementById("cardToolForm").addEventListener("submit", submitCardTool);
   document.getElementById("periodToolForm").addEventListener("submit", submitPeriodTool);
@@ -141,6 +155,9 @@ function closeMenu() {
 function setActiveView(view) {
   const nextView = viewTitles[view] ? view : "record";
   localStorage.setItem(viewStorageKey, nextView);
+  if (window.location.hash !== `#${nextView}`) {
+    history.replaceState(null, "", `#${nextView}`);
+  }
   document.body.dataset.currentView = nextView;
   document.getElementById("viewTitle").textContent = viewTitles[nextView];
   document.querySelectorAll("[data-view-target]").forEach((button) => {
@@ -162,22 +179,36 @@ function setToday() {
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const dd = String(today.getDate()).padStart(2, "0");
   document.getElementById("occurredAt").value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById("bowelMonth").value = `${yyyy}-${mm}`;
 }
 
 async function refreshAll() {
   try {
-    const [options, dashboard, entries] = await Promise.all([
+    const [options, dashboard, entries, bowel] = await Promise.all([
       getJson("/api/finance/options"),
       getJson("/api/finance/dashboard"),
       getJson("/api/finance/entries?limit=30"),
+      getJson(bowelMonthUrl()),
     ]);
     state.options = options;
     state.dashboard = dashboard;
+    state.bowel = bowel;
     renderOptions(options);
     renderDashboard(dashboard);
     renderEntries(entries.entries || []);
+    renderBowelMonth(bowel);
   } catch (error) {
     showReply(`加载失败：${error.message}`);
+  }
+}
+
+async function refreshBowel() {
+  try {
+    const bowel = await getJson(bowelMonthUrl());
+    state.bowel = bowel;
+    renderBowelMonth(bowel);
+  } catch (error) {
+    showReply(`排便记录加载失败：${error.message}`);
   }
 }
 
@@ -348,6 +379,7 @@ async function submitAccountTool(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
   const payload = {
+    id: Number(data.get("id")) || null,
     name: String(data.get("name") || "").trim(),
     account_type: data.get("account_type") || "asset",
     currency: data.get("currency") || "CNY",
@@ -366,8 +398,32 @@ async function submitAccountTool(event) {
     showReply(result.reply);
     await refreshAll();
     setActiveView("accounts");
+    editAccount(result.account);
   } catch (error) {
     showReply(`账户保存失败：${error.message}`);
+  }
+}
+
+async function deleteSelectedAccount() {
+  const form = document.getElementById("accountToolForm");
+  const accountId = Number(form.elements.id.value);
+  const accountName = String(form.elements.name.value || "").trim();
+  if (!accountId) {
+    toast("请先选择账户");
+    return;
+  }
+  if (accountName === "默认账户") {
+    toast("默认账户不能删除");
+    return;
+  }
+  try {
+    const result = await deleteJson(`/api/finance/accounts/${accountId}`);
+    showReply(result.reply);
+    closeAccountEditor();
+    await refreshAll();
+    setActiveView("accounts");
+  } catch (error) {
+    showReply(`删除失败：${error.message}`);
   }
 }
 
@@ -496,6 +552,51 @@ function renderEntries(entries) {
   }
 }
 
+function renderBowelMonth(data) {
+  if (!data) {
+    return;
+  }
+  document.getElementById("bowelTotalMetric").textContent = `${data.total_count || 0}`;
+  document.getElementById("bowelActiveDaysMetric").textContent = `${data.active_days || 0}`;
+  document.getElementById("bowelAverageMetric").textContent = `${data.average_per_active_day || 0}`;
+  document.getElementById("bowelPeriodLabel").textContent = data.period || "--";
+
+  const calendar = document.getElementById("bowelCalendar");
+  const days = data.days || [];
+  const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
+  const firstWeekday = days.length ? Number(days[0].weekday || 0) : 0;
+  const blanks = Array.from({ length: firstWeekday }, () => `<div class="bowel-day empty" aria-hidden="true"></div>`);
+  const cells = days.map((day) => {
+    const count = Number(day.count || 0);
+    const level = count >= 3 ? "high" : count >= 2 ? "medium" : count === 1 ? "low" : "";
+    return `
+      <div class="bowel-day ${level}">
+        <span>${day.day}</span>
+        <strong>${count ? `${count} 次` : ""}</strong>
+      </div>
+    `;
+  });
+  calendar.innerHTML = weekdayLabels.map((label) => `<b>${label}</b>`).join("") + blanks.join("") + cells.join("");
+
+  const recent = document.getElementById("bowelRecentList");
+  const recentItems = data.recent || [];
+  if (!recentItems.length) {
+    recent.innerHTML = `<div class="empty-state">本月暂无记录</div>`;
+    return;
+  }
+  recent.innerHTML = recentItems
+    .slice(0, 8)
+    .map((item) => `
+      <div class="compact-item">
+        <div class="row-between">
+          <strong>${escapeHtml(item.occurred_at_text)}</strong>
+          <span>#${escapeHtml(item.id)}</span>
+        </div>
+      </div>
+    `)
+    .join("");
+}
+
 function renderBudgets(items) {
   const node = document.getElementById("budgetList");
   if (!items.length) {
@@ -592,7 +693,7 @@ function renderAccounts(items) {
   }
   node.innerHTML = items
     .map((item) => `
-      <button class="account-item" type="button" data-account-name="${escapeAttr(item.name)}">
+      <button class="account-item" type="button" data-account-id="${escapeAttr(item.id)}">
         <span>
           <strong>${escapeHtml(item.name)}</strong>
           <small>${escapeHtml(accountTypeLabel(item.account_type))} · 初始 ${escapeHtml(money(item.opening_balance, item.currency))}</small>
@@ -602,19 +703,51 @@ function renderAccounts(items) {
     `)
     .join("");
 
-  node.querySelectorAll("[data-account-name]").forEach((button) => {
+  node.querySelectorAll("[data-account-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      const account = items.find((item) => item.name === button.dataset.accountName);
+      const account = items.find((item) => String(item.id) === button.dataset.accountId);
       if (!account) {
         return;
       }
-      const form = document.getElementById("accountToolForm");
-      form.elements.name.value = account.name;
-      form.elements.account_type.value = account.account_type;
-      form.elements.currency.value = account.currency;
-      form.elements.opening_balance.value = account.opening_balance;
+      editAccount(account);
     });
   });
+}
+
+function startNewAccount() {
+  const form = document.getElementById("accountToolForm");
+  state.accountEditorMode = "new";
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.account_type.value = "asset";
+  form.elements.currency.value = "CNY";
+  form.elements.opening_balance.value = "";
+  document.getElementById("accountEditorTitle").textContent = "新增账户";
+  document.getElementById("deleteAccountButton").classList.add("hidden");
+  form.classList.remove("hidden");
+  form.elements.name.focus();
+}
+
+function editAccount(account) {
+  const form = document.getElementById("accountToolForm");
+  state.accountEditorMode = "edit";
+  form.elements.id.value = account.id;
+  form.elements.name.value = account.name;
+  form.elements.account_type.value = account.account_type;
+  form.elements.currency.value = account.currency;
+  form.elements.opening_balance.value = account.opening_balance;
+  document.getElementById("accountEditorTitle").textContent = `编辑账户：${account.name}`;
+  document.getElementById("deleteAccountButton").classList.toggle("hidden", account.name === "默认账户");
+  form.classList.remove("hidden");
+  form.elements.name.focus();
+}
+
+function closeAccountEditor() {
+  const form = document.getElementById("accountToolForm");
+  state.accountEditorMode = "closed";
+  form.reset();
+  form.elements.id.value = "";
+  form.classList.add("hidden");
 }
 
 function renderQuickActions() {
@@ -638,12 +771,26 @@ function renderTemplateActions(templates) {
   node.innerHTML = existing + templateButtons;
 }
 
+function bowelMonthUrl() {
+  const value = document.getElementById("bowelMonth").value || new Date().toISOString().slice(0, 7);
+  const [year, month] = value.split("-").map((item) => Number(item));
+  const params = new URLSearchParams({
+    year: String(year),
+    month: String(month),
+  });
+  return `/api/health/bowel?${params.toString()}`;
+}
+
 async function getJson(url) {
   return requestJson("GET", url);
 }
 
 async function postJson(url, payload) {
   return requestJson("POST", url, payload);
+}
+
+async function deleteJson(url) {
+  return requestJson("DELETE", url);
 }
 
 async function requestJson(method, url, payload, allowAuthRetry = true) {

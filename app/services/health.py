@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from app.storage.db import Database
 
@@ -238,6 +240,123 @@ class HealthService:
             parts.append(f"状态：{mood}")
         return "，".join(parts) + "。"
 
+    def create_bowel_movement_from_text(self, text: str, now: datetime | None = None) -> str | None:
+        if not _looks_like_bowel_record(text):
+            return None
+
+        occurred_at = _detect_bowel_datetime(text, now or datetime.now())
+        count = _extract_bowel_count(text)
+        ids = []
+        with self.db.connect() as conn:
+            for _ in range(count):
+                cursor = conn.execute(
+                    """
+                    INSERT INTO bowel_movements (occurred_at, source_text)
+                    VALUES (?, ?)
+                    """,
+                    (occurred_at.isoformat(timespec="seconds"), text.strip()),
+                )
+                ids.append(int(cursor.lastrowid))
+
+        summary = self.bowel_month_summary(occurred_at.year, occurred_at.month)
+        today_count = self._bowel_count_for_date(occurred_at.date())
+        id_label = f"#{ids[0]}" if len(ids) == 1 else f"#{ids[0]}-#{ids[-1]}"
+        return (
+            f"已记录拉屎 {id_label}：{occurred_at.strftime('%Y-%m-%d %H:%M')}，"
+            f"本次 {count} 次，今天 {today_count} 次，本月 {summary['total_count']} 次。"
+        )
+
+    def bowel_movements_reply(self, text: str, now: date | None = None) -> str | None:
+        if not _looks_like_bowel_query(text):
+            return None
+
+        now = now or date.today()
+        year, month = _extract_year_month(text, now)
+        summary = self.bowel_month_summary(year, month)
+        if summary["total_count"] == 0:
+            return f"{summary['period']} 还没有拉屎记录。"
+
+        recent = summary["recent"][:5]
+        lines = [
+            (
+                f"{summary['period']} 拉屎情况：共 {summary['total_count']} 次，"
+                f"{summary['active_days']} 天有记录，平均 {summary['average_per_active_day']} 次/记录日。"
+            )
+        ]
+        lines.extend(f"- {item['occurred_at_text']}" for item in recent)
+        return "\n".join(lines)
+
+    def bowel_month_summary(self, year: int, month: int) -> dict[str, Any]:
+        if month < 1 or month > 12:
+            raise ValueError("month must be between 1 and 12")
+
+        start = date(year, month, 1)
+        next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, occurred_at, source_text
+                FROM bowel_movements
+                WHERE occurred_at >= ? AND occurred_at < ?
+                ORDER BY occurred_at DESC, id DESC
+                """,
+                (start.isoformat(), next_month.isoformat()),
+            ).fetchall()
+
+        counts_by_date: dict[str, int] = {}
+        recent = []
+        for row in rows:
+            occurred_at = str(row["occurred_at"])
+            day = occurred_at[:10]
+            counts_by_date[day] = counts_by_date.get(day, 0) + 1
+            recent.append(
+                {
+                    "id": int(row["id"]),
+                    "occurred_at": occurred_at,
+                    "occurred_at_text": occurred_at.replace("T", " ")[:16],
+                    "source_text": str(row["source_text"] or ""),
+                }
+            )
+
+        days = []
+        for day in range(1, monthrange(year, month)[1] + 1):
+            current = date(year, month, day)
+            key = current.isoformat()
+            days.append(
+                {
+                    "date": key,
+                    "day": day,
+                    "weekday": current.weekday(),
+                    "count": counts_by_date.get(key, 0),
+                }
+            )
+
+        total_count = len(rows)
+        active_days = len([count for count in counts_by_date.values() if count > 0])
+        average = round(total_count / active_days, 1) if active_days else 0
+        return {
+            "period": f"{year:04d}-{month:02d}",
+            "year": year,
+            "month": month,
+            "total_count": total_count,
+            "active_days": active_days,
+            "average_per_active_day": average,
+            "days": days,
+            "recent": recent,
+        }
+
+    def _bowel_count_for_date(self, target: date) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM bowel_movements
+                WHERE occurred_at >= ? AND occurred_at < ?
+                """,
+                (target.isoformat(), (target + timedelta(days=1)).isoformat()),
+            ).fetchone()
+        return int(row["count"] or 0)
+
     def latest_plan_reply(self, text: str) -> str | None:
         if not _looks_like_plan_query(text):
             return None
@@ -341,7 +460,7 @@ class HealthService:
 def handle_health_text(text: str, service: HealthService) -> str | None:
     if text.strip() in {"健康帮助", "健康模块帮助"}:
         return (
-            "健康模块支持：健康档案、生成训练课表、生成饮食搭配、健康打卡、查询最近健康打卡。"
+            "健康模块支持：健康档案、生成训练课表、生成饮食搭配、健康打卡、查询最近健康打卡、记录拉屎、查看每月拉屎情况。"
         )
 
     if _looks_like_profile_query(text):
@@ -355,6 +474,10 @@ def handle_health_text(text: str, service: HealthService) -> str | None:
     if checkins:
         return checkins
 
+    bowel_query = service.bowel_movements_reply(text)
+    if bowel_query:
+        return bowel_query
+
     latest_plan = service.latest_plan_reply(text)
     if latest_plan:
         return latest_plan
@@ -362,6 +485,10 @@ def handle_health_text(text: str, service: HealthService) -> str | None:
     checkin = service.create_checkin_from_text(text)
     if checkin:
         return checkin
+
+    bowel_record = service.create_bowel_movement_from_text(text)
+    if bowel_record:
+        return bowel_record
 
     workout = service.create_workout_plan_from_text(text)
     if workout:
@@ -415,6 +542,23 @@ def _looks_like_checkin(text: str) -> bool:
 def _looks_like_checkin_query(text: str) -> bool:
     return any(token in text for token in ["健康打卡", "健康记录", "打卡记录"]) and any(
         token in text for token in ["最近", "今天", "今日", "查询", "查看"]
+    )
+
+
+def _looks_like_bowel_record(text: str) -> bool:
+    stripped = text.strip()
+    if not any(token in stripped for token in ["拉屎", "大便", "排便", "便便", "💩"]):
+        return False
+    if any(token in stripped for token in ["没拉", "没有拉", "未拉", "别记", "不要记"]):
+        return False
+    if _looks_like_bowel_query(stripped):
+        return False
+    return True
+
+
+def _looks_like_bowel_query(text: str) -> bool:
+    return any(token in text for token in ["拉屎", "大便", "排便", "便便", "💩"]) and any(
+        token in text for token in ["情况", "记录", "统计", "查询", "查看", "这个月", "本月", "最近", "多少"]
     )
 
 
@@ -546,6 +690,42 @@ def _extract_meal_notes(text: str) -> str:
 def _extract_mood(text: str) -> str:
     match = re.search(r"(?:状态|心情|精神)[:：]?\s*([^，。,.]+)", text)
     return match.group(1).strip() if match else ""
+
+
+def _extract_bowel_count(text: str) -> int:
+    match = re.search(r"(\d{1,2})\s*次", text)
+    if match:
+        return max(1, min(20, int(match.group(1))))
+    cn_numbers = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+    match = re.search(r"([一二两三四五])\s*次", text)
+    return cn_numbers[match.group(1)] if match else 1
+
+
+def _extract_year_month(text: str, today: date) -> tuple[int, int]:
+    match = re.search(r"(\d{4})[-年/](\d{1,2})月?", text)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    match = re.search(r"(\d{1,2})\s*月", text)
+    if match and "本月" not in text and "这个月" not in text:
+        return today.year, int(match.group(1))
+    return today.year, today.month
+
+
+def _detect_bowel_datetime(text: str, now: datetime) -> datetime:
+    target_date = now.date()
+    if "昨天" in text:
+        target_date = target_date - timedelta(days=1)
+    elif "前天" in text:
+        target_date = target_date - timedelta(days=2)
+
+    hour = now.hour
+    minute = now.minute
+    match = re.search(r"(\d{1,2})\s*(?:点|:|：)\s*(\d{1,2})?", text)
+    if match:
+        hour = max(0, min(23, int(match.group(1))))
+        minute = max(0, min(59, int(match.group(2) or 0)))
+
+    return datetime(target_date.year, target_date.month, target_date.day, hour, minute, now.second)
 
 
 def _detect_checkin_date(text: str, today: date) -> date:

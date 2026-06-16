@@ -336,6 +336,17 @@ CREATE TABLE IF NOT EXISTS health_checkins (
 
 CREATE INDEX IF NOT EXISTS idx_health_checkins_date
 ON health_checkins(checkin_date);
+
+CREATE TABLE IF NOT EXISTS bowel_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL,
+    source_text TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bowel_movements_occurred_at
+ON bowel_movements(occurred_at);
 """
 
 
