@@ -325,31 +325,67 @@ class FinanceWebService:
             },
         }
 
-    def upsert_account(self, *, name: str, account_type: str, currency: str, opening_balance: float) -> dict[str, Any]:
+    def upsert_account(
+        self,
+        *,
+        name: str,
+        account_type: str,
+        currency: str,
+        opening_balance: float,
+        account_id: int | None = None,
+    ) -> dict[str, Any]:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("账户名不能为空")
         with self.db.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO ledger_accounts (name, account_type, currency, opening_balance)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(name)
-                DO UPDATE SET account_type = excluded.account_type,
-                    currency = excluded.currency,
-                    opening_balance = excluded.opening_balance,
-                    status = 'active',
-                    updated_at = datetime('now')
-                """,
-                (normalized_name, account_type, currency, opening_balance),
-            )
+            if account_id:
+                row = conn.execute(
+                    "SELECT id, name FROM ledger_accounts WHERE id = ? AND status = 'active'",
+                    (account_id,),
+                ).fetchone()
+                if not row:
+                    raise ValueError("账户不存在或已删除")
+                if int(row["id"]) == 1 and normalized_name != "默认账户":
+                    raise ValueError("默认账户不能重命名")
+                duplicate = conn.execute(
+                    "SELECT id FROM ledger_accounts WHERE name = ? AND id != ?",
+                    (normalized_name, account_id),
+                ).fetchone()
+                if duplicate:
+                    raise ValueError("账户名已存在")
+                conn.execute(
+                    """
+                    UPDATE ledger_accounts
+                    SET name = ?,
+                        account_type = ?,
+                        currency = ?,
+                        opening_balance = ?,
+                        updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (normalized_name, account_type, currency, opening_balance, account_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO ledger_accounts (name, account_type, currency, opening_balance)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(name)
+                    DO UPDATE SET account_type = excluded.account_type,
+                        currency = excluded.currency,
+                        opening_balance = excluded.opening_balance,
+                        status = 'active',
+                        updated_at = datetime('now')
+                    """,
+                    (normalized_name, account_type, currency, opening_balance),
+                )
             row = conn.execute(
                 """
                 SELECT id, name, account_type, currency, opening_balance, statement_day, repayment_day
                 FROM ledger_accounts
-                WHERE name = ?
+                WHERE id = COALESCE(?, id) AND name = ?
                 """,
-                (normalized_name,),
+                (account_id, normalized_name),
             ).fetchone()
             balance = _account_balance(conn, int(row["id"]), float(row["opening_balance"]))
         account = {
@@ -363,6 +399,30 @@ class FinanceWebService:
             "repayment_day": row["repayment_day"],
         }
         return {"reply": f"已保存账户：{normalized_name}，当前余额 {balance:.2f} {currency}。", "account": account}
+
+    def delete_account(self, account_id: int) -> dict[str, str]:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT id, name FROM ledger_accounts WHERE id = ? AND status = 'active'",
+                (account_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError("账户不存在或已删除")
+            if int(row["id"]) == 1 or row["name"] == "默认账户":
+                raise ValueError("默认账户不能删除")
+            usage = conn.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM ledger_entries WHERE account_id = ? OR transfer_to_account_id = ?) AS entry_count,
+                    (SELECT COUNT(*) FROM recurring_ledger_entries WHERE account_id = ?) AS recurring_count
+                """,
+                (account_id, account_id, account_id),
+            ).fetchone()
+            used_count = int(usage["entry_count"]) + int(usage["recurring_count"])
+            if used_count:
+                raise ValueError("这个账户已有流水或周期账单，不能删除")
+            conn.execute("DELETE FROM ledger_accounts WHERE id = ?", (account_id,))
+        return {"reply": f"已删除账户：{row['name']}。"}
 
 
 def _parse_occurred_at(value: str | None) -> datetime:

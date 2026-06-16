@@ -81,6 +81,77 @@ class FinanceWebServiceTest(unittest.TestCase):
             self.assertEqual(account["opening_balance"], 1000)
             self.assertEqual(account["balance"], 962)
 
+    def test_edit_account_by_id_updates_existing_account(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = FinanceWebService(db, LedgerService(db))
+
+            account = service.upsert_account(
+                name="旧钱包",
+                account_type="wallet",
+                currency="CNY",
+                opening_balance=10,
+            )["account"]
+            updated = service.upsert_account(
+                account_id=int(account["id"]),
+                name="新钱包",
+                account_type="cash",
+                currency="CNY",
+                opening_balance=20,
+            )["account"]
+
+            self.assertEqual(updated["id"], account["id"])
+            self.assertEqual(updated["name"], "新钱包")
+            self.assertEqual(updated["account_type"], "cash")
+            accounts = service.options()["accounts"]
+            self.assertFalse(any(item["name"] == "旧钱包" for item in accounts))
+            self.assertTrue(any(item["name"] == "新钱包" for item in accounts))
+
+            with self.assertRaises(ValueError):
+                service.upsert_account(
+                    account_id=1,
+                    name="默认账户2",
+                    account_type="asset",
+                    currency="CNY",
+                    opening_balance=0,
+                )
+
+    def test_delete_unused_account_and_reject_used_account(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = FinanceWebService(db, LedgerService(db))
+
+            unused = service.upsert_account(
+                name="临时钱包",
+                account_type="wallet",
+                currency="CNY",
+                opening_balance=10,
+            )["account"]
+            deleted = service.delete_account(int(unused["id"]))
+            self.assertIn("已删除账户", deleted["reply"])
+            self.assertFalse(any(item["name"] == "临时钱包" for item in service.options()["accounts"]))
+
+            used = service.upsert_account(
+                name="已用账户",
+                account_type="asset",
+                currency="CNY",
+                opening_balance=100,
+            )["account"]
+            service.create_entry(
+                FinanceEntryInput(
+                    entry_type="expense",
+                    amount=8,
+                    currency="CNY",
+                    category="餐饮",
+                    note="早餐",
+                    account="已用账户",
+                )
+            )
+            with self.assertRaises(ValueError):
+                service.delete_account(int(used["id"]))
+
     def test_web_token_guard_rejects_missing_token_when_configured(self) -> None:
         import app.main as main
 
@@ -169,6 +240,8 @@ class FinanceWebServiceTest(unittest.TestCase):
                 result = main.finance_upsert_account(payload)
                 self.assertEqual(result["account"]["name"], "现金")
                 self.assertEqual(result["account"]["balance"], 200)
+                deleted = main.finance_delete_account(int(result["account"]["id"]))
+                self.assertIn("已删除账户", deleted["reply"])
             finally:
                 main.finance_web_service = original_service
 
