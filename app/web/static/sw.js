@@ -1,4 +1,4 @@
-const CACHE_NAME = "jarvis-finance-shell-v4";
+const CACHE_NAME = "jarvis-finance-shell-v6";
 const APP_SHELL = [
   "/finance",
   "/finance-static/app.js",

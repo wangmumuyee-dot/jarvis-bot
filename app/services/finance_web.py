@@ -107,9 +107,40 @@ class FinanceWebService:
                 LIMIT 8
                 """
             ).fetchall()
+            account_rows = conn.execute(
+                """
+                SELECT id, name, account_type, currency, opening_balance
+                FROM ledger_accounts
+                WHERE status = 'active'
+                ORDER BY updated_at DESC, name
+                """
+            ).fetchall()
+
+            account_items = []
+            currency_totals: dict[str, float] = {}
+            for row in account_rows:
+                balance = _account_balance(conn, int(row["id"]), float(row["opening_balance"]))
+                currency = str(row["currency"])
+                currency_totals[currency] = currency_totals.get(currency, 0.0) + balance
+                account_items.append(
+                    {
+                        "id": int(row["id"]),
+                        "name": row["name"],
+                        "account_type": row["account_type"],
+                        "currency": currency,
+                        "balance": balance,
+                        "opening_balance": float(row["opening_balance"]),
+                    }
+                )
 
         expense = float(totals["expense"])
         income = float(totals["income"])
+        currency_items = [
+            {"currency": currency, "total": total}
+            for currency, total in sorted(currency_totals.items(), key=lambda item: item[0])
+        ]
+        primary_currency = "CNY" if "CNY" in currency_totals else (currency_items[0]["currency"] if currency_items else "CNY")
+        primary_total = float(currency_totals.get(primary_currency, 0.0))
         return {
             "period": now.strftime("%Y-%m"),
             "totals": {
@@ -160,6 +191,13 @@ class FinanceWebService:
                 }
                 for row in debt_rows
             ],
+            "assets": {
+                "primary_currency": primary_currency,
+                "primary_total": primary_total,
+                "currency_count": len(currency_items),
+                "currencies": currency_items,
+                "accounts": account_items,
+            },
         }
 
     def options(self) -> dict[str, Any]:
@@ -285,11 +323,97 @@ class FinanceWebService:
         ]
 
     def create_entry(self, item: FinanceEntryInput) -> dict[str, Any]:
+        draft = self._draft_from_input(item)
+        entry = self.ledger_service.create(draft)
+        warning = self.ledger_service.budget_warning_for_entry(draft)
+        return {
+            "id": entry.id,
+            "reply": _entry_reply(entry.id, draft, warning),
+            "entry": _entry_payload(entry.id, draft),
+        }
+
+    def update_entry(self, entry_id: int, item: FinanceEntryInput) -> dict[str, Any]:
+        draft = self._draft_from_input(item)
+        with self.db.connect() as conn:
+            existing = conn.execute("SELECT id FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
+            if not existing:
+                raise ValueError("流水不存在")
+            book_id = self.ledger_service._ensure_book(conn, draft.book)
+            account_id = self.ledger_service._ensure_account(conn, draft.account)
+            transfer_to_account_id = (
+                self.ledger_service._ensure_account(conn, draft.transfer_to_account)
+                if draft.transfer_to_account
+                else None
+            )
+            category_id = self.ledger_service._ensure_category(conn, draft.category, draft.subcategory, draft.entry_type)
+            conn.execute(
+                """
+                UPDATE ledger_entries
+                SET book_id = ?,
+                    account_id = ?,
+                    category_id = ?,
+                    transfer_to_account_id = ?,
+                    entry_type = ?,
+                    amount = ?,
+                    currency = ?,
+                    category = ?,
+                    note = ?,
+                    occurred_at = ?,
+                    reimbursable = ?,
+                    reimbursement_status = ?,
+                    source_text = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    book_id,
+                    account_id,
+                    category_id,
+                    transfer_to_account_id,
+                    draft.entry_type,
+                    draft.amount,
+                    draft.currency,
+                    draft.category,
+                    draft.note,
+                    draft.occurred_at.isoformat(timespec="seconds"),
+                    1 if draft.reimbursable else 0,
+                    draft.reimbursement_status,
+                    draft.source_text,
+                    entry_id,
+                ),
+            )
+            conn.execute("DELETE FROM ledger_entry_tags WHERE entry_id = ?", (entry_id,))
+            for tag in draft.tags:
+                tag_id = self.ledger_service._ensure_tag(conn, tag)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO ledger_entry_tags (entry_id, tag_id)
+                    VALUES (?, ?)
+                    """,
+                    (entry_id, tag_id),
+                )
+        warning = self.ledger_service.budget_warning_for_entry(draft)
+        return {
+            "id": entry_id,
+            "reply": _entry_update_reply(entry_id, draft, warning),
+            "entry": _entry_payload(entry_id, draft),
+        }
+
+    def delete_entry(self, entry_id: int) -> dict[str, str]:
+        with self.db.connect() as conn:
+            existing = conn.execute("SELECT id FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
+            if not existing:
+                raise ValueError("流水不存在")
+            conn.execute("DELETE FROM ledger_entry_tags WHERE entry_id = ?", (entry_id,))
+            conn.execute("DELETE FROM ledger_entries WHERE id = ?", (entry_id,))
+        return {"reply": f"已删除流水 #{entry_id}。"}
+
+    def _draft_from_input(self, item: FinanceEntryInput) -> LedgerEntryDraft:
         occurred_at = _parse_occurred_at(item.occurred_at)
         reimbursement_status = "pending" if item.reimbursable else "none"
         if item.entry_type == "reimbursement":
             reimbursement_status = "received"
-        draft = LedgerEntryDraft(
+        return LedgerEntryDraft(
             entry_type=item.entry_type,
             amount=item.amount,
             currency=item.currency,
@@ -305,25 +429,6 @@ class FinanceWebService:
             transfer_to_account=item.transfer_to_account.strip() if item.transfer_to_account else None,
             tags=tuple(tag.strip("# ") for tag in item.tags if tag.strip("# ")),
         )
-        entry = self.ledger_service.create(draft)
-        warning = self.ledger_service.budget_warning_for_entry(draft)
-        return {
-            "id": entry.id,
-            "reply": _entry_reply(entry.id, draft, warning),
-            "entry": {
-                "id": entry.id,
-                "entry_type": draft.entry_type,
-                "entry_type_label": _type_label(draft.entry_type),
-                "amount": draft.amount,
-                "currency": draft.currency,
-                "category": draft.category,
-                "note": draft.note,
-                "occurred_at": draft.occurred_at.isoformat(timespec="seconds"),
-                "book": draft.book,
-                "account": draft.account,
-                "tags": list(draft.tags),
-            },
-        }
 
     def upsert_account(
         self,
@@ -408,8 +513,6 @@ class FinanceWebService:
             ).fetchone()
             if not row:
                 raise ValueError("账户不存在或已删除")
-            if int(row["id"]) == 1 or row["name"] == "默认账户":
-                raise ValueError("默认账户不能删除")
             usage = conn.execute(
                 """
                 SELECT
@@ -420,8 +523,26 @@ class FinanceWebService:
             ).fetchone()
             used_count = int(usage["entry_count"]) + int(usage["recurring_count"])
             if used_count:
-                raise ValueError("这个账户已有流水或周期账单，不能删除")
-            conn.execute("DELETE FROM ledger_accounts WHERE id = ?", (account_id,))
+                conn.execute(
+                    """
+                    UPDATE ledger_accounts
+                    SET status = 'archived', updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (account_id,),
+                )
+                return {"reply": f"已归档账户：{row['name']}。历史流水仍会保留这个账户。"}
+            if row["name"] == "默认账户":
+                conn.execute(
+                    """
+                    UPDATE ledger_accounts
+                    SET status = 'archived', updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (account_id,),
+                )
+            else:
+                conn.execute("DELETE FROM ledger_accounts WHERE id = ?", (account_id,))
         return {"reply": f"已删除账户：{row['name']}。"}
 
 
@@ -493,3 +614,33 @@ def _entry_reply(entry_id: int, draft: LedgerEntryDraft, warning: str | None) ->
         f"类型：{_type_label(draft.entry_type)}，分类：{draft.category}，"
         f"账户：{draft.account}{transfer}，备注：{draft.note}{tags}。{warning_text}"
     )
+
+
+def _entry_update_reply(entry_id: int, draft: LedgerEntryDraft, warning: str | None) -> str:
+    tags = f"，标签：{'、'.join('#' + tag for tag in draft.tags)}" if draft.tags else ""
+    transfer = f"，转入：{draft.transfer_to_account}" if draft.transfer_to_account else ""
+    warning_text = f"\n{warning}" if warning else ""
+    return (
+        f"已更新流水 #{entry_id}：{draft.amount:.2f} {draft.currency}，"
+        f"类型：{_type_label(draft.entry_type)}，分类：{draft.category}，"
+        f"账户：{draft.account}{transfer}，备注：{draft.note}{tags}。{warning_text}"
+    )
+
+
+def _entry_payload(entry_id: int, draft: LedgerEntryDraft) -> dict[str, Any]:
+    return {
+        "id": entry_id,
+        "entry_type": draft.entry_type,
+        "entry_type_label": _type_label(draft.entry_type),
+        "amount": draft.amount,
+        "currency": draft.currency,
+        "category": draft.category,
+        "note": draft.note,
+        "occurred_at": draft.occurred_at.isoformat(timespec="seconds"),
+        "book": draft.book,
+        "account": draft.account,
+        "transfer_to_account": draft.transfer_to_account,
+        "reimbursable": draft.reimbursable,
+        "reimbursement_status": draft.reimbursement_status,
+        "tags": list(draft.tags),
+    }

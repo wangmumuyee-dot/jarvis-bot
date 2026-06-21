@@ -81,6 +81,42 @@ class FinanceWebServiceTest(unittest.TestCase):
             self.assertEqual(account["opening_balance"], 1000)
             self.assertEqual(account["balance"], 962)
 
+    def test_dashboard_includes_total_assets_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            ledger = LedgerService(db)
+            service = FinanceWebService(db, ledger)
+
+            service.upsert_account(
+                name="现金",
+                account_type="cash",
+                currency="CNY",
+                opening_balance=1000,
+            )
+            service.upsert_account(
+                name="备用金",
+                account_type="wallet",
+                currency="CNY",
+                opening_balance=200,
+            )
+            service.create_entry(
+                FinanceEntryInput(
+                    entry_type="expense",
+                    amount=80,
+                    currency="CNY",
+                    category="餐饮",
+                    note="晚饭",
+                    account="现金",
+                )
+            )
+
+            dashboard = service.dashboard()
+            self.assertEqual(dashboard["assets"]["primary_currency"], "CNY")
+            self.assertEqual(dashboard["assets"]["primary_total"], 1120)
+            self.assertEqual(len(dashboard["assets"]["accounts"]), 3)
+            self.assertTrue(any(item["name"] == "现金" and item["balance"] == 920 for item in dashboard["assets"]["accounts"]))
+
     def test_edit_account_by_id_updates_existing_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "jarvis.db")
@@ -117,7 +153,7 @@ class FinanceWebServiceTest(unittest.TestCase):
                     opening_balance=0,
                 )
 
-    def test_delete_unused_account_and_reject_used_account(self) -> None:
+    def test_delete_account_removes_unused_and_archives_used_or_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "jarvis.db")
             db.init()
@@ -149,8 +185,54 @@ class FinanceWebServiceTest(unittest.TestCase):
                     account="已用账户",
                 )
             )
-            with self.assertRaises(ValueError):
-                service.delete_account(int(used["id"]))
+            archived = service.delete_account(int(used["id"]))
+            self.assertIn("已归档账户", archived["reply"])
+            self.assertFalse(any(item["name"] == "已用账户" for item in service.options()["accounts"]))
+
+            default_deleted = service.delete_account(1)
+            self.assertIn("已删除账户", default_deleted["reply"])
+            self.assertFalse(any(item["name"] == "默认账户" for item in service.options()["accounts"]))
+
+    def test_update_and_delete_entry_from_web(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            service = FinanceWebService(db, LedgerService(db))
+
+            created = service.create_entry(
+                FinanceEntryInput(
+                    entry_type="expense",
+                    amount=20,
+                    currency="CNY",
+                    category="餐饮",
+                    note="午饭",
+                    account="默认账户",
+                    tags=("old",),
+                )
+            )
+            updated = service.update_entry(
+                int(created["id"]),
+                FinanceEntryInput(
+                    entry_type="income",
+                    amount=88,
+                    currency="CNY",
+                    category="收入",
+                    note="红包",
+                    account="现金",
+                    tags=("new",),
+                ),
+            )
+            self.assertIn("已更新流水", updated["reply"])
+            entry = service.entries()[0]
+            self.assertEqual(entry["entry_type"], "income")
+            self.assertEqual(entry["amount"], 88)
+            self.assertEqual(entry["note"], "红包")
+            self.assertEqual(entry["account"], "现金")
+            self.assertEqual(entry["tags"], ["new"])
+
+            deleted = service.delete_entry(int(created["id"]))
+            self.assertIn("已删除流水", deleted["reply"])
+            self.assertEqual(service.entries(), [])
 
     def test_web_token_guard_rejects_missing_token_when_configured(self) -> None:
         import app.main as main

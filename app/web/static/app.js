@@ -7,7 +7,7 @@ const state = {
     templates: [],
   },
   dashboard: null,
-  bowel: null,
+  entries: [],
   accountEditorMode: "closed",
 };
 
@@ -20,8 +20,6 @@ const quickCommands = [
   "查看愿望清单",
   "分析本月消费",
   "导出本月账单",
-  "拉屎",
-  "这个月拉屎情况",
   "导出脱敏账单",
   "同步状态",
 ];
@@ -40,7 +38,6 @@ const viewTitles = {
   record: "记账",
   entries: "流水",
   insights: "洞察",
-  bowel: "排便",
   budget: "预算",
   debt: "欠款",
   saving: "愿望",
@@ -100,16 +97,21 @@ function bindEvents() {
   });
 
   document.getElementById("entryForm").addEventListener("submit", submitEntry);
+  document.getElementById("entryEditForm").addEventListener("submit", submitEntryEdit);
+  document.getElementById("cancelEntryEditButton").addEventListener("click", closeEntryEditor);
+  document.getElementById("deleteEntryButton").addEventListener("click", deleteSelectedEntry);
+  document.querySelectorAll("#editEntryTypeGroup .segment").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("#editEntryTypeGroup .segment").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      document.getElementById("editEntryType").value = button.dataset.editType;
+    });
+  });
   document.getElementById("commandForm").addEventListener("submit", submitCommand);
   document.getElementById("budgetToolForm").addEventListener("submit", submitBudgetTool);
   document.getElementById("debtToolForm").addEventListener("submit", submitDebtTool);
   document.getElementById("savingToolForm").addEventListener("submit", submitSavingTool);
   document.getElementById("templateToolForm").addEventListener("submit", submitTemplateTool);
-  document.getElementById("bowelMonth").addEventListener("change", refreshBowel);
-  document.getElementById("logBowelButton").addEventListener("click", async () => {
-    await executeCommand("拉屎");
-    await refreshBowel();
-  });
   document.getElementById("recurringToolForm").addEventListener("submit", submitRecurringTool);
   document.getElementById("importToolForm").addEventListener("submit", submitImportTool);
   document.getElementById("accountToolForm").addEventListener("submit", submitAccountTool);
@@ -179,56 +181,30 @@ function setToday() {
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const dd = String(today.getDate()).padStart(2, "0");
   document.getElementById("occurredAt").value = `${yyyy}-${mm}-${dd}`;
-  document.getElementById("bowelMonth").value = `${yyyy}-${mm}`;
 }
 
 async function refreshAll() {
   try {
-    const [options, dashboard, entries, bowel] = await Promise.all([
+    const [options, dashboard, entries] = await Promise.all([
       getJson("/api/finance/options"),
       getJson("/api/finance/dashboard"),
       getJson("/api/finance/entries?limit=30"),
-      getJson(bowelMonthUrl()),
     ]);
     state.options = options;
     state.dashboard = dashboard;
-    state.bowel = bowel;
+    state.entries = entries.entries || [];
     renderOptions(options);
     renderDashboard(dashboard);
-    renderEntries(entries.entries || []);
-    renderBowelMonth(bowel);
+    renderEntries(state.entries);
   } catch (error) {
     showReply(`加载失败：${error.message}`);
-  }
-}
-
-async function refreshBowel() {
-  try {
-    const bowel = await getJson(bowelMonthUrl());
-    state.bowel = bowel;
-    renderBowelMonth(bowel);
-  } catch (error) {
-    showReply(`排便记录加载失败：${error.message}`);
   }
 }
 
 async function submitEntry(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const data = new FormData(form);
-  const payload = {
-    entry_type: data.get("entry_type"),
-    amount: Number(data.get("amount")),
-    currency: data.get("currency") || "CNY",
-    category: String(data.get("category") || "其他").trim(),
-    note: String(data.get("note") || "").trim(),
-    occurred_at: data.get("occurred_at") || null,
-    account: String(data.get("account") || "默认账户").trim(),
-    book: String(data.get("book") || "日常账本").trim(),
-    transfer_to_account: String(data.get("transfer_to_account") || "").trim() || null,
-    reimbursable: Boolean(data.get("reimbursable")),
-    tags: splitTags(String(data.get("tags") || "")),
-  };
+  const payload = entryPayloadFromForm(form);
 
   if (!payload.amount || payload.amount <= 0) {
     toast("金额需要大于 0");
@@ -245,6 +221,68 @@ async function submitEntry(event) {
   } catch (error) {
     showReply(`保存失败：${error.message}`);
   }
+}
+
+async function submitEntryEdit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const entryId = Number(form.elements.id.value);
+  if (!entryId) {
+    toast("请先选择流水");
+    return;
+  }
+  const payload = entryPayloadFromForm(form);
+  if (!payload.amount || payload.amount <= 0) {
+    toast("金额需要大于 0");
+    return;
+  }
+  try {
+    const result = await putJson(`/api/finance/entries/${entryId}`, payload);
+    showReply(result.reply);
+    closeEntryEditor();
+    await refreshAll();
+    setActiveView("entries");
+  } catch (error) {
+    showReply(`修改失败：${error.message}`);
+  }
+}
+
+async function deleteSelectedEntry() {
+  const form = document.getElementById("entryEditForm");
+  const entryId = Number(form.elements.id.value);
+  if (!entryId) {
+    toast("请先选择流水");
+    return;
+  }
+  if (!window.confirm(`确定删除流水 #${entryId}？`)) {
+    return;
+  }
+  try {
+    const result = await deleteJson(`/api/finance/entries/${entryId}`);
+    showReply(result.reply);
+    closeEntryEditor();
+    await refreshAll();
+    setActiveView("entries");
+  } catch (error) {
+    showReply(`删除失败：${error.message}`);
+  }
+}
+
+function entryPayloadFromForm(form) {
+  const data = new FormData(form);
+  return {
+    entry_type: data.get("entry_type"),
+    amount: Number(data.get("amount")),
+    currency: data.get("currency") || "CNY",
+    category: String(data.get("category") || "其他").trim(),
+    note: String(data.get("note") || "").trim(),
+    occurred_at: data.get("occurred_at") || null,
+    account: String(data.get("account") || "默认账户").trim(),
+    book: String(data.get("book") || "日常账本").trim(),
+    transfer_to_account: String(data.get("transfer_to_account") || "").trim() || null,
+    reimbursable: Boolean(data.get("reimbursable")),
+    tags: splitTags(String(data.get("tags") || "")),
+  };
 }
 
 async function submitCommand(event) {
@@ -407,13 +445,8 @@ async function submitAccountTool(event) {
 async function deleteSelectedAccount() {
   const form = document.getElementById("accountToolForm");
   const accountId = Number(form.elements.id.value);
-  const accountName = String(form.elements.name.value || "").trim();
   if (!accountId) {
     toast("请先选择账户");
-    return;
-  }
-  if (accountName === "默认账户") {
-    toast("默认账户不能删除");
     return;
   }
   try {
@@ -497,6 +530,7 @@ async function executeCommand(text) {
 
 function renderOptions(options) {
   fillSelect("currencySelect", options.currencies || state.options.currencies, "CNY");
+  fillSelect("editCurrencySelect", options.currencies || state.options.currencies, "CNY");
   document.querySelectorAll(".account-currency-select").forEach((node) => {
     fillSelectElement(node, options.currencies || state.options.currencies, "CNY");
   });
@@ -510,6 +544,8 @@ function renderOptions(options) {
   );
   fillAccountSelect("accountSelect", options.accounts || [], "默认账户", false);
   fillAccountSelect("transferAccountSelect", options.accounts || [], "", true);
+  fillAccountSelect("editAccountSelect", options.accounts || [], "默认账户", false);
+  fillAccountSelect("editTransferAccountSelect", options.accounts || [], "", true);
   document.querySelectorAll(".account-select").forEach((node) => {
     fillAccountSelectElement(node, options.accounts || [], node.value || "默认账户", false);
   });
@@ -524,10 +560,54 @@ function renderDashboard(data) {
   document.getElementById("expenseMetric").textContent = money(data.totals.expense);
   document.getElementById("netMetric").textContent = money(data.totals.net);
   document.getElementById("reimburseMetric").textContent = money(data.totals.pending_reimbursement);
+  renderAssets(data.assets || {});
   renderBudgets(data.budgets || []);
   renderCategories(data.categories || []);
   renderSavings(data.saving_goals || []);
   renderDebts(data.debts || []);
+}
+
+function renderAssets(assets) {
+  const primaryCurrency = assets.primary_currency || "CNY";
+  const primaryTotal = Number(assets.primary_total || 0);
+  const currencyItems = assets.currencies || [];
+  const accountItems = assets.accounts || [];
+
+  document.getElementById("assetMetric").textContent = money(primaryTotal, primaryCurrency);
+  document.getElementById("assetHint").textContent = currencyItems.length > 1 ? `含 ${currencyItems.length} 个币种` : `按 ${primaryCurrency} 统计`;
+
+  const currencyNode = document.getElementById("assetCurrencyList");
+  if (!currencyItems.length) {
+    currencyNode.innerHTML = `<div class="empty-state">暂无账户资产</div>`;
+  } else {
+    currencyNode.innerHTML = currencyItems
+      .map((item) => `
+        <div class="compact-item">
+          <div class="row-between">
+            <strong>${escapeHtml(item.currency)}</strong>
+            <span>${escapeHtml(money(item.total, item.currency))}</span>
+          </div>
+        </div>
+      `)
+      .join("");
+  }
+
+  const accountNode = document.getElementById("accountAssetList");
+  if (!accountItems.length) {
+    accountNode.innerHTML = "";
+    return;
+  }
+  accountNode.innerHTML = accountItems
+    .map((item) => `
+      <div class="account-item static-account-item">
+        <span>
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>${escapeHtml(accountTypeLabel(item.account_type))}</small>
+        </span>
+        <b>${escapeHtml(money(item.balance, item.currency))}</b>
+      </div>
+    `)
+    .join("");
 }
 
 function renderEntries(entries) {
@@ -535,7 +615,7 @@ function renderEntries(entries) {
   const body = document.getElementById("entriesBody");
   body.innerHTML = "";
   if (!entries.length) {
-    body.innerHTML = `<tr><td colspan="6" class="empty-state">暂无流水</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">暂无流水</td></tr>`;
     return;
   }
   for (const entry of entries) {
@@ -547,54 +627,53 @@ function renderEntries(entries) {
       <td>${escapeHtml(entry.note)}${tagsHtml(entry.tags)}</td>
       <td>${escapeHtml(entry.account || "")}</td>
       <td class="number-cell">${escapeHtml(money(entry.amount, entry.currency))}</td>
+      <td><button class="text-button table-action" type="button" data-edit-entry-id="${escapeAttr(entry.id)}">编辑</button></td>
     `;
     body.appendChild(row);
   }
+  body.querySelectorAll("[data-edit-entry-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const entry = state.entries.find((item) => String(item.id) === button.dataset.editEntryId);
+      if (entry) {
+        editEntry(entry);
+      }
+    });
+  });
 }
 
-function renderBowelMonth(data) {
-  if (!data) {
-    return;
-  }
-  document.getElementById("bowelTotalMetric").textContent = `${data.total_count || 0}`;
-  document.getElementById("bowelActiveDaysMetric").textContent = `${data.active_days || 0}`;
-  document.getElementById("bowelAverageMetric").textContent = `${data.average_per_active_day || 0}`;
-  document.getElementById("bowelPeriodLabel").textContent = data.period || "--";
+function editEntry(entry) {
+  const form = document.getElementById("entryEditForm");
+  form.elements.id.value = entry.id;
+  setEditEntryType(entry.entry_type || "expense");
+  form.elements.amount.value = entry.amount;
+  form.elements.currency.value = entry.currency || "CNY";
+  form.elements.category.value = entry.category || "其他";
+  form.elements.occurred_at.value = datePart(entry.occurred_at);
+  form.elements.account.value = entry.account || "默认账户";
+  form.elements.book.value = entry.book || "日常账本";
+  form.elements.transfer_to_account.value = entry.transfer_to_account || "";
+  form.elements.note.value = entry.note || "";
+  form.elements.tags.value = (entry.tags || []).join(", ");
+  form.elements.reimbursable.checked = Boolean(entry.reimbursable);
+  document.getElementById("entryEditorTitle").textContent = `编辑流水 #${entry.id}`;
+  document.getElementById("entryEditPanel").classList.remove("hidden");
+  setActiveView("entries");
+  form.elements.amount.focus();
+}
 
-  const calendar = document.getElementById("bowelCalendar");
-  const days = data.days || [];
-  const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
-  const firstWeekday = days.length ? Number(days[0].weekday || 0) : 0;
-  const blanks = Array.from({ length: firstWeekday }, () => `<div class="bowel-day empty" aria-hidden="true"></div>`);
-  const cells = days.map((day) => {
-    const count = Number(day.count || 0);
-    const level = count >= 3 ? "high" : count >= 2 ? "medium" : count === 1 ? "low" : "";
-    return `
-      <div class="bowel-day ${level}">
-        <span>${day.day}</span>
-        <strong>${count ? `${count} 次` : ""}</strong>
-      </div>
-    `;
+function setEditEntryType(type) {
+  document.getElementById("editEntryType").value = type;
+  document.querySelectorAll("#editEntryTypeGroup .segment").forEach((button) => {
+    button.classList.toggle("active", button.dataset.editType === type);
   });
-  calendar.innerHTML = weekdayLabels.map((label) => `<b>${label}</b>`).join("") + blanks.join("") + cells.join("");
+}
 
-  const recent = document.getElementById("bowelRecentList");
-  const recentItems = data.recent || [];
-  if (!recentItems.length) {
-    recent.innerHTML = `<div class="empty-state">本月暂无记录</div>`;
-    return;
-  }
-  recent.innerHTML = recentItems
-    .slice(0, 8)
-    .map((item) => `
-      <div class="compact-item">
-        <div class="row-between">
-          <strong>${escapeHtml(item.occurred_at_text)}</strong>
-          <span>#${escapeHtml(item.id)}</span>
-        </div>
-      </div>
-    `)
-    .join("");
+function closeEntryEditor() {
+  const form = document.getElementById("entryEditForm");
+  form.reset();
+  form.elements.id.value = "";
+  setEditEntryType("expense");
+  document.getElementById("entryEditPanel").classList.add("hidden");
 }
 
 function renderBudgets(items) {
@@ -737,7 +816,7 @@ function editAccount(account) {
   form.elements.currency.value = account.currency;
   form.elements.opening_balance.value = account.opening_balance;
   document.getElementById("accountEditorTitle").textContent = `编辑账户：${account.name}`;
-  document.getElementById("deleteAccountButton").classList.toggle("hidden", account.name === "默认账户");
+  document.getElementById("deleteAccountButton").classList.remove("hidden");
   form.classList.remove("hidden");
   form.elements.name.focus();
 }
@@ -771,22 +850,16 @@ function renderTemplateActions(templates) {
   node.innerHTML = existing + templateButtons;
 }
 
-function bowelMonthUrl() {
-  const value = document.getElementById("bowelMonth").value || new Date().toISOString().slice(0, 7);
-  const [year, month] = value.split("-").map((item) => Number(item));
-  const params = new URLSearchParams({
-    year: String(year),
-    month: String(month),
-  });
-  return `/api/health/bowel?${params.toString()}`;
-}
-
 async function getJson(url) {
   return requestJson("GET", url);
 }
 
 async function postJson(url, payload) {
   return requestJson("POST", url, payload);
+}
+
+async function putJson(url, payload) {
+  return requestJson("PUT", url, payload);
 }
 
 async function deleteJson(url) {

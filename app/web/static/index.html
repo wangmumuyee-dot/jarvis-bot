@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#087f73" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Jarvis" />
+    <meta name="apple-mobile-web-app-title" content="Jarvis 财务" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <title>Jarvis 生活工作台</title>
+    <title>Jarvis 财务</title>
     <link rel="manifest" href="/finance-static/manifest.webmanifest" />
     <link rel="icon" href="/finance-static/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" sizes="180x180" href="/finance-static/icons/apple-touch-icon.png" />
@@ -39,7 +39,7 @@
       <div class="menu-backdrop hidden" id="menuBackdrop"></div>
       <nav class="side-menu hidden" id="sideMenu" aria-label="财务功能菜单">
         <div class="menu-head">
-          <strong>Jarvis</strong>
+          <strong>Jarvis 财务</strong>
           <button class="icon-button" id="closeMenuButton" type="button" title="关闭菜单" aria-label="关闭菜单">
             <span aria-hidden="true">×</span>
           </button>
@@ -47,7 +47,6 @@
         <button class="menu-item active" type="button" data-view-target="record">记账</button>
         <button class="menu-item" type="button" data-view-target="entries">流水</button>
         <button class="menu-item" type="button" data-view-target="insights">洞察</button>
-        <button class="menu-item" type="button" data-view-target="bowel">排便</button>
         <button class="menu-item" type="button" data-view-target="budget">预算</button>
         <button class="menu-item" type="button" data-view-target="debt">欠款</button>
         <button class="menu-item" type="button" data-view-target="saving">愿望</button>
@@ -57,44 +56,6 @@
       </nav>
 
       <main class="workspace">
-        <section class="summary-grid" aria-label="本月概览" data-view-panel="record insights">
-          <article class="metric income">
-            <span class="metric-label">本月收入</span>
-            <strong id="incomeMetric">--</strong>
-          </article>
-          <article class="metric expense">
-            <span class="metric-label">本月支出</span>
-            <strong id="expenseMetric">--</strong>
-          </article>
-          <article class="metric net">
-            <span class="metric-label">本月净额</span>
-            <strong id="netMetric">--</strong>
-          </article>
-          <article class="metric reimburse">
-            <span class="metric-label">待报销</span>
-            <strong id="reimburseMetric">--</strong>
-          </article>
-        </section>
-
-        <section class="summary-grid" aria-label="排便月度概览" data-view-panel="bowel">
-          <article class="metric bowel">
-            <span class="metric-label">本月次数</span>
-            <strong id="bowelTotalMetric">--</strong>
-          </article>
-          <article class="metric bowel-active">
-            <span class="metric-label">记录天数</span>
-            <strong id="bowelActiveDaysMetric">--</strong>
-          </article>
-          <article class="metric bowel-average">
-            <span class="metric-label">记录日均</span>
-            <strong id="bowelAverageMetric">--</strong>
-          </article>
-          <article class="metric bowel-action">
-            <span class="metric-label">快捷记录</span>
-            <button class="primary-button" id="logBowelButton" type="button">记录拉屎</button>
-          </article>
-        </section>
-
         <section class="primary-grid">
           <div class="panel entry-panel" data-view-panel="record">
             <div class="panel-head">
@@ -182,27 +143,23 @@
           </div>
         </section>
 
-        <section class="detail-grid">
-          <div class="panel bowel-panel" data-view-panel="bowel">
-            <div class="panel-head">
-              <h2>月历</h2>
-              <label class="inline-month">
-                <span id="bowelPeriodLabel">--</span>
-                <input id="bowelMonth" type="month" />
-              </label>
-            </div>
-            <div id="bowelCalendar" class="bowel-calendar"></div>
-          </div>
-
-          <aside class="side-stack">
-            <div class="panel" data-view-panel="bowel">
-              <div class="panel-head">
-                <h2>最近</h2>
-                <button class="text-button" data-command="这个月拉屎情况" type="button">查询</button>
-              </div>
-              <div id="bowelRecentList" class="compact-list"></div>
-            </div>
-          </aside>
+        <section class="summary-grid" aria-label="本月概览" data-view-panel="record insights">
+          <article class="metric income">
+            <span class="metric-label">本月收入</span>
+            <strong id="incomeMetric">--</strong>
+          </article>
+          <article class="metric expense">
+            <span class="metric-label">本月支出</span>
+            <strong id="expenseMetric">--</strong>
+          </article>
+          <article class="metric net">
+            <span class="metric-label">本月净额</span>
+            <strong id="netMetric">--</strong>
+          </article>
+          <article class="metric reimburse">
+            <span class="metric-label">待报销</span>
+            <strong id="reimburseMetric">--</strong>
+          </article>
         </section>
 
         <section class="tools-grid" aria-label="财务工具">
@@ -473,6 +430,72 @@
         </section>
 
         <section class="detail-grid">
+          <div class="panel entry-edit-panel hidden" id="entryEditPanel" data-view-panel="entries">
+            <div class="panel-head">
+              <h2 id="entryEditorTitle">编辑流水</h2>
+              <button class="text-button" id="cancelEntryEditButton" type="button">取消</button>
+            </div>
+            <form id="entryEditForm" class="entry-form">
+              <input name="id" type="hidden" />
+              <div class="segmented" id="editEntryTypeGroup" role="tablist" aria-label="编辑流水类型">
+                <button type="button" class="segment active" data-edit-type="expense">支出</button>
+                <button type="button" class="segment" data-edit-type="income">收入</button>
+                <button type="button" class="segment" data-edit-type="refund">退款</button>
+                <button type="button" class="segment" data-edit-type="transfer">转账</button>
+                <button type="button" class="segment" data-edit-type="reimbursement">报销</button>
+              </div>
+              <input type="hidden" name="entry_type" id="editEntryType" value="expense" />
+              <div class="form-grid">
+                <label>
+                  <span>金额</span>
+                  <input name="amount" type="number" step="0.01" min="0.01" required />
+                </label>
+                <label>
+                  <span>币种</span>
+                  <select name="currency" id="editCurrencySelect"></select>
+                </label>
+                <label>
+                  <span>分类</span>
+                  <input name="category" id="editCategoryInput" list="categoryList" required />
+                </label>
+                <label>
+                  <span>日期</span>
+                  <input name="occurred_at" type="date" />
+                </label>
+                <label>
+                  <span>账户</span>
+                  <select name="account" id="editAccountSelect"></select>
+                </label>
+                <label>
+                  <span>账本</span>
+                  <input name="book" list="bookList" />
+                </label>
+              </div>
+              <label class="wide-label">
+                <span>备注</span>
+                <input name="note" />
+              </label>
+              <div class="form-grid secondary-fields">
+                <label>
+                  <span>转入账户</span>
+                  <select name="transfer_to_account" id="editTransferAccountSelect"></select>
+                </label>
+                <label>
+                  <span>标签</span>
+                  <input name="tags" placeholder="出差, 618" />
+                </label>
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" name="reimbursable" />
+                <span>待报销</span>
+              </label>
+              <div class="editor-actions">
+                <button class="secondary-button danger-button" id="deleteEntryButton" type="button">删除流水</button>
+                <button class="primary-button" type="submit">保存修改</button>
+              </div>
+            </form>
+          </div>
+
           <div class="panel entries-panel" data-view-panel="entries">
             <div class="panel-head">
               <h2>最近流水</h2>
@@ -488,6 +511,7 @@
                     <th>备注</th>
                     <th>账户</th>
                     <th class="number-cell">金额</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="entriesBody"></tbody>
@@ -496,6 +520,18 @@
           </div>
 
           <aside class="side-stack">
+            <div class="panel" data-view-panel="insights">
+              <div class="panel-head">
+                <h2>总资产</h2>
+                <span class="soft-label" id="assetHint">--</span>
+              </div>
+              <div class="asset-total">
+                <strong id="assetMetric">--</strong>
+              </div>
+              <div id="assetCurrencyList" class="compact-list"></div>
+              <div id="accountAssetList" class="account-list account-asset-list"></div>
+            </div>
+
             <div class="panel" data-view-panel="budget insights">
               <div class="panel-head">
                 <h2>预算</h2>
