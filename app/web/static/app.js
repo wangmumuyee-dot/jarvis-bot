@@ -140,6 +140,24 @@ function bindEvents() {
   document.getElementById("cardToolForm").addEventListener("submit", submitCardTool);
   document.getElementById("periodToolForm").addEventListener("submit", submitPeriodTool);
   document.getElementById("searchToolForm").addEventListener("submit", submitSearchTool);
+  document.getElementById("entriesBody").addEventListener("click", (event) => {
+    const editButton = event.target.closest("[data-edit-entry-id]");
+    if (editButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const entry = state.entries.find((item) => String(item.id) === editButton.dataset.editEntryId);
+      if (entry) {
+        editEntry(entry);
+      }
+      return;
+    }
+    const deleteButton = event.target.closest("[data-delete-entry-id]");
+    if (deleteButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteEntryById(Number(deleteButton.dataset.deleteEntryId));
+    }
+  });
 
   document.body.addEventListener("click", (event) => {
     const target = event.target.closest("[data-command]");
@@ -150,13 +168,8 @@ function bindEvents() {
       downloadExport(target.dataset.exportScope, target.dataset.exportRedact === "true");
       return;
     }
-    if (target.closest(".button-grid") || document.body.dataset.currentView !== "command") {
-      setActiveView("command");
-      executeCommand(target.dataset.command);
-      return;
-    }
     document.getElementById("commandText").value = target.dataset.command;
-    document.getElementById("commandText").focus();
+    executeCommand(target.dataset.command);
   });
 
   document.addEventListener("keydown", (event) => {
@@ -785,21 +798,6 @@ function renderEntries(entries) {
     `;
     body.appendChild(row);
   }
-  body.querySelectorAll("[data-edit-entry-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const entry = state.entries.find((item) => String(item.id) === button.dataset.editEntryId);
-      if (entry) {
-        editEntry(entry);
-      }
-    });
-  });
-  body.querySelectorAll("[data-delete-entry-id]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      deleteEntryById(Number(button.dataset.deleteEntryId));
-    });
-  });
 }
 
 function editEntry(entry) {
