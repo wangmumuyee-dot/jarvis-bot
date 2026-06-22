@@ -9,6 +9,11 @@ const state = {
   dashboard: null,
   entries: [],
   accountEditorMode: "closed",
+  accountSaving: false,
+  entrySaving: false,
+  entryComposerOpen: true,
+  refreshing: false,
+  pendingDeleteEntryId: null,
 };
 
 const quickCommands = [
@@ -97,9 +102,22 @@ function bindEvents() {
   });
 
   document.getElementById("entryForm").addEventListener("submit", submitEntry);
+  document.getElementById("entryComposerToggle").addEventListener("click", toggleEntryComposer);
+  document.getElementById("entryCollapsedTrigger").addEventListener("click", openEntryComposer);
   document.getElementById("entryEditForm").addEventListener("submit", submitEntryEdit);
   document.getElementById("cancelEntryEditButton").addEventListener("click", closeEntryEditor);
-  document.getElementById("deleteEntryButton").addEventListener("click", deleteSelectedEntry);
+  document.getElementById("entryEditModal").addEventListener("click", (event) => {
+    if (event.target.id === "entryEditModal") {
+      closeEntryEditor();
+    }
+  });
+  document.getElementById("cancelEntryDeleteButton").addEventListener("click", closeEntryDeleteModal);
+  document.getElementById("confirmEntryDeleteButton").addEventListener("click", confirmEntryDelete);
+  document.getElementById("entryDeleteModal").addEventListener("click", (event) => {
+    if (event.target.id === "entryDeleteModal") {
+      closeEntryDeleteModal();
+    }
+  });
   document.querySelectorAll("#editEntryTypeGroup .segment").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll("#editEntryTypeGroup .segment").forEach((item) => item.classList.remove("active"));
@@ -140,6 +158,13 @@ function bindEvents() {
     document.getElementById("commandText").value = target.dataset.command;
     document.getElementById("commandText").focus();
   });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeEntryEditor();
+      closeEntryDeleteModal();
+    }
+  });
 }
 
 function openMenu() {
@@ -172,6 +197,9 @@ function setActiveView(view) {
   document.querySelectorAll(".primary-grid, .tools-grid, .detail-grid").forEach((container) => {
     container.classList.toggle("view-container-hidden", !container.querySelector("[data-view-panel].active-view"));
   });
+  if (nextView === "record") {
+    openEntryComposer();
+  }
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -184,6 +212,11 @@ function setToday() {
 }
 
 async function refreshAll() {
+  if (state.refreshing) {
+    return;
+  }
+  state.refreshing = true;
+  setRefreshState("loading");
   try {
     const [options, dashboard, entries] = await Promise.all([
       getJson("/api/finance/options"),
@@ -196,13 +229,20 @@ async function refreshAll() {
     renderOptions(options);
     renderDashboard(dashboard);
     renderEntries(state.entries);
+    setRefreshState("success");
   } catch (error) {
     showReply(`加载失败：${error.message}`);
+    setRefreshState("error", error.message);
+  } finally {
+    state.refreshing = false;
   }
 }
 
 async function submitEntry(event) {
   event.preventDefault();
+  if (state.entrySaving) {
+    return;
+  }
   const form = event.currentTarget;
   const payload = entryPayloadFromForm(form);
 
@@ -211,15 +251,36 @@ async function submitEntry(event) {
     return;
   }
 
+  state.entrySaving = true;
+  const submitButton = form.querySelector("button[type='submit']");
+  const originalLabel = submitButton ? submitButton.textContent : "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "保存中...";
+  }
+  setEntrySaveFeedback("正在保存这笔流水...", "pending");
   try {
     const result = await postJson("/api/finance/entries", payload);
     showReply(result.reply);
+    toast("流水已保存");
     form.querySelector("[name='amount']").value = "";
     form.querySelector("[name='note']").value = "";
     form.querySelector("[name='tags']").value = "";
     await refreshAll();
+    closeEntryComposer();
+    setEntrySaveFeedback(
+      `已保存：${money(payload.amount, payload.currency)} · ${payload.category} · ${payload.account}`,
+      "success",
+    );
   } catch (error) {
     showReply(`保存失败：${error.message}`);
+    setEntrySaveFeedback(`保存失败：${error.message}`, "error");
+  } finally {
+    state.entrySaving = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalLabel || "保存流水";
+    }
   }
 }
 
@@ -247,25 +308,42 @@ async function submitEntryEdit(event) {
   }
 }
 
-async function deleteSelectedEntry() {
-  const form = document.getElementById("entryEditForm");
-  const entryId = Number(form.elements.id.value);
+async function deleteEntryById(entryId) {
   if (!entryId) {
-    toast("请先选择流水");
+    toast("请先选择要删除的流水");
     return;
   }
-  if (!window.confirm(`确定删除流水 #${entryId}？`)) {
+  state.pendingDeleteEntryId = entryId;
+  const message = document.getElementById("entryDeleteMessage");
+  message.textContent = `确定删除流水 #${entryId}？删除后不能恢复。`;
+  document.getElementById("entryDeleteModal").classList.remove("hidden");
+}
+
+async function confirmEntryDelete() {
+  const entryId = Number(state.pendingDeleteEntryId);
+  if (!entryId) {
+    closeEntryDeleteModal();
     return;
   }
   try {
     const result = await deleteJson(`/api/finance/entries/${entryId}`);
     showReply(result.reply);
-    closeEntryEditor();
+    toast("流水已删除");
+    const form = document.getElementById("entryEditForm");
+    if (Number(form.elements.id.value) === entryId) {
+      closeEntryEditor();
+    }
+    closeEntryDeleteModal();
     await refreshAll();
     setActiveView("entries");
   } catch (error) {
     showReply(`删除失败：${error.message}`);
   }
+}
+
+function closeEntryDeleteModal() {
+  state.pendingDeleteEntryId = null;
+  document.getElementById("entryDeleteModal").classList.add("hidden");
 }
 
 function entryPayloadFromForm(form) {
@@ -415,6 +493,10 @@ async function submitImportTool(event) {
 
 async function submitAccountTool(event) {
   event.preventDefault();
+  if (state.accountSaving) {
+    return;
+  }
+  const form = event.currentTarget;
   const data = new FormData(event.currentTarget);
   const payload = {
     id: Number(data.get("id")) || null,
@@ -431,14 +513,27 @@ async function submitAccountTool(event) {
     toast("请填写有效余额");
     return;
   }
+  state.accountSaving = true;
+  const submitButton = form.querySelector("button[type='submit']");
+  const originalLabel = submitButton ? submitButton.textContent : "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "保存中...";
+  }
   try {
     const result = await postJson("/api/finance/accounts", payload);
     showReply(result.reply);
+    closeAccountEditor();
     await refreshAll();
     setActiveView("accounts");
-    editAccount(result.account);
   } catch (error) {
     showReply(`账户保存失败：${error.message}`);
+  } finally {
+    state.accountSaving = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalLabel || "保存账户";
+    }
   }
 }
 
@@ -572,9 +667,11 @@ function renderAssets(assets) {
   const primaryTotal = Number(assets.primary_total || 0);
   const currencyItems = assets.currencies || [];
   const accountItems = assets.accounts || [];
+  const historyItems = assets.history || [];
 
   document.getElementById("assetMetric").textContent = money(primaryTotal, primaryCurrency);
   document.getElementById("assetHint").textContent = currencyItems.length > 1 ? `含 ${currencyItems.length} 个币种` : `按 ${primaryCurrency} 统计`;
+  renderAssetHistory(historyItems, primaryCurrency);
 
   const currencyNode = document.getElementById("assetCurrencyList");
   if (!currencyItems.length) {
@@ -610,6 +707,58 @@ function renderAssets(assets) {
     .join("");
 }
 
+function renderAssetHistory(items, currency) {
+  const node = document.getElementById("assetChart");
+  const rangeNode = document.getElementById("assetChartRange");
+  if (!items.length) {
+    node.innerHTML = "暂无资产曲线";
+    node.classList.add("empty-state");
+    rangeNode.textContent = "--";
+    return;
+  }
+
+  node.classList.remove("empty-state");
+  const values = items.map((item) => Number(item.total || 0));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const width = 320;
+  const height = 156;
+  const paddingX = 8;
+  const paddingTop = 12;
+  const paddingBottom = 28;
+  const chartHeight = height - paddingTop - paddingBottom;
+  const stepX = items.length > 1 ? (width - paddingX * 2) / (items.length - 1) : 0;
+  const points = items
+    .map((item, index) => {
+      const x = paddingX + stepX * index;
+      const y = paddingTop + (max - Number(item.total || 0)) / span * chartHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const areaPoints = `${paddingX},${height - paddingBottom} ${points} ${paddingX + stepX * (items.length - 1)},${height - paddingBottom}`;
+  const startLabel = items[0].label || items[0].date;
+  const endLabel = items[items.length - 1].label || items[items.length - 1].date;
+  rangeNode.textContent = `${startLabel} - ${endLabel}`;
+
+  const midValue = (min + max) / 2;
+  node.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="asset-chart-svg" aria-label="每日总资产折线图">
+      <line x1="${paddingX}" y1="${paddingTop}" x2="${paddingX}" y2="${height - paddingBottom}" class="asset-chart-grid" />
+      <line x1="${paddingX}" y1="${paddingTop + chartHeight / 2}" x2="${width - paddingX}" y2="${paddingTop + chartHeight / 2}" class="asset-chart-grid" />
+      <line x1="${paddingX}" y1="${height - paddingBottom}" x2="${width - paddingX}" y2="${height - paddingBottom}" class="asset-chart-grid" />
+      <polygon points="${areaPoints}" class="asset-chart-area"></polygon>
+      <polyline points="${points}" class="asset-chart-line"></polyline>
+      <circle cx="${paddingX}" cy="${paddingTop + (max - values[0]) / span * chartHeight}" r="3.5" class="asset-chart-dot"></circle>
+      <circle cx="${paddingX + stepX * (items.length - 1)}" cy="${paddingTop + (max - values[values.length - 1]) / span * chartHeight}" r="4" class="asset-chart-dot current"></circle>
+      <text x="${paddingX}" y="10" class="asset-chart-label">${escapeHtml(money(max, currency))}</text>
+      <text x="${paddingX}" y="${paddingTop + chartHeight / 2 - 4}" class="asset-chart-label">${escapeHtml(money(midValue, currency))}</text>
+      <text x="${paddingX}" y="${height - 8}" class="asset-chart-label">${escapeHtml(startLabel)}</text>
+      <text x="${width - paddingX}" y="${height - 8}" text-anchor="end" class="asset-chart-label">${escapeHtml(endLabel)}</text>
+    </svg>
+  `;
+}
+
 function renderEntries(entries) {
   document.getElementById("entryCountLabel").textContent = `${entries.length} 条`;
   const body = document.getElementById("entriesBody");
@@ -621,13 +770,18 @@ function renderEntries(entries) {
   for (const entry of entries) {
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${escapeHtml(datePart(entry.occurred_at))}</td>
-      <td><span class="badge ${badgeClass(entry.entry_type)}">${escapeHtml(entry.entry_type_label)}</span></td>
-      <td>${escapeHtml(entry.category)}</td>
-      <td>${escapeHtml(entry.note)}${tagsHtml(entry.tags)}</td>
-      <td>${escapeHtml(entry.account || "")}</td>
-      <td class="number-cell">${escapeHtml(money(entry.amount, entry.currency))}</td>
-      <td><button class="text-button table-action" type="button" data-edit-entry-id="${escapeAttr(entry.id)}">编辑</button></td>
+      <td data-label="日期">${escapeHtml(datePart(entry.occurred_at))}</td>
+      <td data-label="类型"><span class="badge ${badgeClass(entry.entry_type)}">${escapeHtml(entry.entry_type_label)}</span></td>
+      <td data-label="分类">${escapeHtml(entry.category)}</td>
+      <td data-label="备注">${escapeHtml(entry.note)}${tagsHtml(entry.tags)}</td>
+      <td data-label="账户">${escapeHtml(entry.account || "")}</td>
+      <td class="number-cell" data-label="金额">${escapeHtml(money(entry.amount, entry.currency))}</td>
+      <td data-label="操作">
+        <div class="table-actions">
+          <button class="text-button table-action" type="button" data-edit-entry-id="${escapeAttr(entry.id)}">修改</button>
+          <button class="text-button table-action danger-text" type="button" data-delete-entry-id="${escapeAttr(entry.id)}">删除</button>
+        </div>
+      </td>
     `;
     body.appendChild(row);
   }
@@ -637,6 +791,13 @@ function renderEntries(entries) {
       if (entry) {
         editEntry(entry);
       }
+    });
+  });
+  body.querySelectorAll("[data-delete-entry-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteEntryById(Number(button.dataset.deleteEntryId));
     });
   });
 }
@@ -655,8 +816,8 @@ function editEntry(entry) {
   form.elements.note.value = entry.note || "";
   form.elements.tags.value = (entry.tags || []).join(", ");
   form.elements.reimbursable.checked = Boolean(entry.reimbursable);
-  document.getElementById("entryEditorTitle").textContent = `编辑流水 #${entry.id}`;
-  document.getElementById("entryEditPanel").classList.remove("hidden");
+  document.getElementById("entryEditorTitle").textContent = `修改流水 #${entry.id}`;
+  document.getElementById("entryEditModal").classList.remove("hidden");
   setActiveView("entries");
   form.elements.amount.focus();
 }
@@ -670,10 +831,14 @@ function setEditEntryType(type) {
 
 function closeEntryEditor() {
   const form = document.getElementById("entryEditForm");
+  const modal = document.getElementById("entryEditModal");
+  if (modal.classList.contains("hidden")) {
+    return;
+  }
   form.reset();
   form.elements.id.value = "";
   setEditEntryType("expense");
-  document.getElementById("entryEditPanel").classList.add("hidden");
+  modal.classList.add("hidden");
 }
 
 function renderBudgets(items) {
@@ -759,6 +924,78 @@ function renderDebts(items) {
       `;
     })
     .join("");
+}
+
+function setEntrySaveFeedback(text, stateName) {
+  const node = document.getElementById("entrySaveFeedback");
+  if (!node) {
+    return;
+  }
+  node.textContent = text || "";
+  node.classList.remove("hidden", "pending", "success", "error");
+  if (!text) {
+    node.classList.add("hidden");
+    return;
+  }
+  node.classList.add(stateName || "success");
+}
+
+function setRefreshState(stateName, detail = "") {
+  const button = document.getElementById("refreshButton");
+  const icon = document.getElementById("refreshIcon");
+  const status = document.getElementById("refreshStatus");
+  if (!button || !icon || !status) {
+    return;
+  }
+  button.disabled = stateName === "loading";
+  icon.classList.toggle("spinning", stateName === "loading");
+  if (stateName === "loading") {
+    status.textContent = "刷新中...";
+    return;
+  }
+  if (stateName === "error") {
+    status.textContent = `刷新失败${detail ? `：${detail}` : ""}`;
+    toast("刷新失败");
+    return;
+  }
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  status.textContent = `已刷新 ${hh}:${mm}:${ss}`;
+  toast("数据已刷新");
+}
+
+function openEntryComposer() {
+  state.entryComposerOpen = true;
+  const panel = document.getElementById("entryPanel");
+  const body = document.getElementById("entryComposerBody");
+  const toggle = document.getElementById("entryComposerToggle");
+  const trigger = document.getElementById("entryCollapsedTrigger");
+  panel.classList.remove("collapsed");
+  body.classList.remove("hidden");
+  trigger.classList.add("hidden");
+  toggle.textContent = "收起";
+}
+
+function closeEntryComposer() {
+  state.entryComposerOpen = false;
+  const panel = document.getElementById("entryPanel");
+  const body = document.getElementById("entryComposerBody");
+  const toggle = document.getElementById("entryComposerToggle");
+  const trigger = document.getElementById("entryCollapsedTrigger");
+  panel.classList.add("collapsed");
+  body.classList.add("hidden");
+  trigger.classList.remove("hidden");
+  toggle.textContent = "记一笔";
+}
+
+function toggleEntryComposer() {
+  if (state.entryComposerOpen) {
+    closeEntryComposer();
+    return;
+  }
+  openEntryComposer();
 }
 
 function renderAccounts(items) {

@@ -27,11 +27,12 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <span class="soft-label topbar-status" id="refreshStatus">未刷新</span>
           <button class="icon-button" id="authButton" type="button" title="访问口令" aria-label="访问口令">
             <span aria-hidden="true">K</span>
           </button>
           <button class="icon-button" id="refreshButton" type="button" title="刷新数据" aria-label="刷新数据">
-            <span aria-hidden="true">↻</span>
+            <span aria-hidden="true" id="refreshIcon">↻</span>
           </button>
         </div>
       </header>
@@ -57,76 +58,82 @@
 
       <main class="workspace">
         <section class="primary-grid">
-          <div class="panel entry-panel" data-view-panel="record">
+          <div class="panel entry-panel" id="entryPanel" data-view-panel="record">
             <div class="panel-head">
               <h2>快速记账</h2>
-              <span id="periodLabel" class="soft-label">--</span>
+              <div class="panel-head-actions">
+                <span id="periodLabel" class="soft-label">--</span>
+                <button class="text-button" id="entryComposerToggle" type="button">收起</button>
+              </div>
             </div>
+            <button class="secondary-button entry-collapsed-trigger hidden" id="entryCollapsedTrigger" type="button">记一笔</button>
+            <div id="entryComposerBody">
+              <form id="entryForm" class="entry-form">
+                <div class="segmented" id="entryTypeGroup" role="tablist" aria-label="流水类型">
+                  <button type="button" class="segment active" data-type="expense">支出</button>
+                  <button type="button" class="segment" data-type="income">收入</button>
+                  <button type="button" class="segment" data-type="refund">退款</button>
+                  <button type="button" class="segment" data-type="transfer">转账</button>
+                  <button type="button" class="segment" data-type="reimbursement">报销</button>
+                </div>
 
-            <form id="entryForm" class="entry-form">
-              <div class="segmented" id="entryTypeGroup" role="tablist" aria-label="流水类型">
-                <button type="button" class="segment active" data-type="expense">支出</button>
-                <button type="button" class="segment" data-type="income">收入</button>
-                <button type="button" class="segment" data-type="refund">退款</button>
-                <button type="button" class="segment" data-type="transfer">转账</button>
-                <button type="button" class="segment" data-type="reimbursement">报销</button>
-              </div>
+                <input type="hidden" name="entry_type" id="entryType" value="expense" />
 
-              <input type="hidden" name="entry_type" id="entryType" value="expense" />
+                <div class="form-grid">
+                  <label>
+                    <span>金额</span>
+                    <input name="amount" type="number" step="0.01" min="0.01" required placeholder="38" />
+                  </label>
+                  <label>
+                    <span>币种</span>
+                    <select name="currency" id="currencySelect"></select>
+                  </label>
+                  <label>
+                    <span>分类</span>
+                    <input name="category" id="categoryInput" list="categoryList" value="餐饮" />
+                    <datalist id="categoryList"></datalist>
+                  </label>
+                  <label>
+                    <span>日期</span>
+                    <input name="occurred_at" type="date" id="occurredAt" />
+                  </label>
+                  <label>
+                    <span>账户</span>
+                    <select name="account" id="accountSelect"></select>
+                    <datalist id="accountList"></datalist>
+                  </label>
+                  <label>
+                    <span>账本</span>
+                    <input name="book" id="bookInput" list="bookList" value="日常账本" />
+                    <datalist id="bookList"></datalist>
+                  </label>
+                </div>
 
-              <div class="form-grid">
-                <label>
-                  <span>金额</span>
-                  <input name="amount" type="number" step="0.01" min="0.01" required placeholder="38" />
+                <label class="wide-label">
+                  <span>备注</span>
+                  <input name="note" placeholder="午饭、打车、工资到账..." />
                 </label>
-                <label>
-                  <span>币种</span>
-                  <select name="currency" id="currencySelect"></select>
-                </label>
-                <label>
-                  <span>分类</span>
-                  <input name="category" id="categoryInput" list="categoryList" value="餐饮" />
-                  <datalist id="categoryList"></datalist>
-                </label>
-                <label>
-                  <span>日期</span>
-                  <input name="occurred_at" type="date" id="occurredAt" />
-                </label>
-                <label>
-                  <span>账户</span>
-                  <select name="account" id="accountSelect"></select>
-                  <datalist id="accountList"></datalist>
-                </label>
-                <label>
-                  <span>账本</span>
-                  <input name="book" id="bookInput" list="bookList" value="日常账本" />
-                  <datalist id="bookList"></datalist>
-                </label>
-              </div>
 
-              <label class="wide-label">
-                <span>备注</span>
-                <input name="note" placeholder="午饭、打车、工资到账..." />
-              </label>
+                <div class="form-grid secondary-fields">
+                  <label>
+                    <span>转入账户</span>
+                    <select name="transfer_to_account" id="transferAccountSelect"></select>
+                  </label>
+                  <label>
+                    <span>标签</span>
+                    <input name="tags" placeholder="出差, 618" />
+                  </label>
+                </div>
 
-              <div class="form-grid secondary-fields">
-                <label>
-                  <span>转入账户</span>
-                  <select name="transfer_to_account" id="transferAccountSelect"></select>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="reimbursable" />
+                  <span>待报销</span>
                 </label>
-                <label>
-                  <span>标签</span>
-                  <input name="tags" placeholder="出差, 618" />
-                </label>
-              </div>
 
-              <label class="checkbox-row">
-                <input type="checkbox" name="reimbursable" />
-                <span>待报销</span>
-              </label>
-
-              <button class="primary-button" type="submit">保存流水</button>
-            </form>
+                <button class="primary-button" type="submit">保存流水</button>
+              </form>
+            </div>
+            <div id="entrySaveFeedback" class="form-feedback hidden" aria-live="polite"></div>
           </div>
 
           <div class="panel command-panel" data-view-panel="command">
@@ -430,72 +437,6 @@
         </section>
 
         <section class="detail-grid">
-          <div class="panel entry-edit-panel hidden" id="entryEditPanel" data-view-panel="entries">
-            <div class="panel-head">
-              <h2 id="entryEditorTitle">编辑流水</h2>
-              <button class="text-button" id="cancelEntryEditButton" type="button">取消</button>
-            </div>
-            <form id="entryEditForm" class="entry-form">
-              <input name="id" type="hidden" />
-              <div class="segmented" id="editEntryTypeGroup" role="tablist" aria-label="编辑流水类型">
-                <button type="button" class="segment active" data-edit-type="expense">支出</button>
-                <button type="button" class="segment" data-edit-type="income">收入</button>
-                <button type="button" class="segment" data-edit-type="refund">退款</button>
-                <button type="button" class="segment" data-edit-type="transfer">转账</button>
-                <button type="button" class="segment" data-edit-type="reimbursement">报销</button>
-              </div>
-              <input type="hidden" name="entry_type" id="editEntryType" value="expense" />
-              <div class="form-grid">
-                <label>
-                  <span>金额</span>
-                  <input name="amount" type="number" step="0.01" min="0.01" required />
-                </label>
-                <label>
-                  <span>币种</span>
-                  <select name="currency" id="editCurrencySelect"></select>
-                </label>
-                <label>
-                  <span>分类</span>
-                  <input name="category" id="editCategoryInput" list="categoryList" required />
-                </label>
-                <label>
-                  <span>日期</span>
-                  <input name="occurred_at" type="date" />
-                </label>
-                <label>
-                  <span>账户</span>
-                  <select name="account" id="editAccountSelect"></select>
-                </label>
-                <label>
-                  <span>账本</span>
-                  <input name="book" list="bookList" />
-                </label>
-              </div>
-              <label class="wide-label">
-                <span>备注</span>
-                <input name="note" />
-              </label>
-              <div class="form-grid secondary-fields">
-                <label>
-                  <span>转入账户</span>
-                  <select name="transfer_to_account" id="editTransferAccountSelect"></select>
-                </label>
-                <label>
-                  <span>标签</span>
-                  <input name="tags" placeholder="出差, 618" />
-                </label>
-              </div>
-              <label class="checkbox-row">
-                <input type="checkbox" name="reimbursable" />
-                <span>待报销</span>
-              </label>
-              <div class="editor-actions">
-                <button class="secondary-button danger-button" id="deleteEntryButton" type="button">删除流水</button>
-                <button class="primary-button" type="submit">保存修改</button>
-              </div>
-            </form>
-          </div>
-
           <div class="panel entries-panel" data-view-panel="entries">
             <div class="panel-head">
               <h2>最近流水</h2>
@@ -527,6 +468,13 @@
               </div>
               <div class="asset-total">
                 <strong id="assetMetric">--</strong>
+              </div>
+              <div class="asset-chart-panel">
+                <div class="row-between">
+                  <strong>每日变化</strong>
+                  <span class="soft-label" id="assetChartRange">--</span>
+                </div>
+                <div id="assetChart" class="asset-chart empty-state">暂无资产曲线</div>
               </div>
               <div id="assetCurrencyList" class="compact-list"></div>
               <div id="accountAssetList" class="account-list account-asset-list"></div>
@@ -566,6 +514,86 @@
           </aside>
         </section>
       </main>
+    </div>
+
+    <div class="modal-overlay hidden" id="entryEditModal" role="dialog" aria-modal="true" aria-labelledby="entryEditorTitle">
+      <div class="panel entry-edit-panel modal-card" id="entryEditPanel">
+        <div class="panel-head">
+          <h2 id="entryEditorTitle">修改这笔流水</h2>
+          <button class="text-button" id="cancelEntryEditButton" type="button">取消</button>
+        </div>
+        <form id="entryEditForm" class="entry-form">
+          <input name="id" type="hidden" />
+          <div class="segmented" id="editEntryTypeGroup" role="tablist" aria-label="编辑流水类型">
+            <button type="button" class="segment active" data-edit-type="expense">支出</button>
+            <button type="button" class="segment" data-edit-type="income">收入</button>
+            <button type="button" class="segment" data-edit-type="refund">退款</button>
+            <button type="button" class="segment" data-edit-type="transfer">转账</button>
+            <button type="button" class="segment" data-edit-type="reimbursement">报销</button>
+          </div>
+          <input type="hidden" name="entry_type" id="editEntryType" value="expense" />
+          <div class="form-grid">
+            <label>
+              <span>金额</span>
+              <input name="amount" type="number" step="0.01" min="0.01" required />
+            </label>
+            <label>
+              <span>币种</span>
+              <select name="currency" id="editCurrencySelect"></select>
+            </label>
+            <label>
+              <span>分类</span>
+              <input name="category" id="editCategoryInput" list="categoryList" required />
+            </label>
+            <label>
+              <span>日期</span>
+              <input name="occurred_at" type="date" />
+            </label>
+            <label>
+              <span>账户</span>
+              <select name="account" id="editAccountSelect"></select>
+            </label>
+            <label>
+              <span>账本</span>
+              <input name="book" list="bookList" />
+            </label>
+          </div>
+          <label class="wide-label">
+            <span>备注</span>
+            <input name="note" />
+          </label>
+          <div class="form-grid secondary-fields">
+            <label>
+              <span>转入账户</span>
+              <select name="transfer_to_account" id="editTransferAccountSelect"></select>
+            </label>
+            <label>
+              <span>标签</span>
+              <input name="tags" placeholder="出差, 618" />
+            </label>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" name="reimbursable" />
+            <span>待报销</span>
+          </label>
+          <div class="editor-actions">
+            <button class="primary-button" type="submit">保存修改</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="entryDeleteModal" role="dialog" aria-modal="true" aria-labelledby="entryDeleteTitle">
+      <div class="panel modal-card confirm-card">
+        <div class="panel-head">
+          <h2 id="entryDeleteTitle">删除这笔流水？</h2>
+          <button class="text-button" id="cancelEntryDeleteButton" type="button">取消</button>
+        </div>
+        <p class="confirm-text" id="entryDeleteMessage">删除后不能恢复。</p>
+        <div class="editor-actions">
+          <button class="secondary-button danger-button" id="confirmEntryDeleteButton" type="button">确认删除</button>
+        </div>
+      </div>
     </div>
 
     <div class="auth-overlay hidden" id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle">

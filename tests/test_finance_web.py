@@ -5,6 +5,7 @@ import unittest
 import base64
 import json
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -116,6 +117,51 @@ class FinanceWebServiceTest(unittest.TestCase):
             self.assertEqual(dashboard["assets"]["primary_total"], 1120)
             self.assertEqual(len(dashboard["assets"]["accounts"]), 3)
             self.assertTrue(any(item["name"] == "现金" and item["balance"] == 920 for item in dashboard["assets"]["accounts"]))
+            self.assertEqual(dashboard["assets"]["history"][-1]["total"], 1120)
+
+    def test_dashboard_includes_daily_asset_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "jarvis.db")
+            db.init()
+            ledger = LedgerService(db)
+            service = FinanceWebService(db, ledger)
+
+            service.upsert_account(
+                name="现金",
+                account_type="cash",
+                currency="CNY",
+                opening_balance=1000,
+            )
+            service.create_entry(
+                FinanceEntryInput(
+                    entry_type="expense",
+                    amount=100,
+                    currency="CNY",
+                    category="餐饮",
+                    note="午饭",
+                    occurred_at="2026-06-02",
+                    account="现金",
+                )
+            )
+            service.create_entry(
+                FinanceEntryInput(
+                    entry_type="income",
+                    amount=300,
+                    currency="CNY",
+                    category="收入",
+                    note="工资",
+                    occurred_at="2026-06-05",
+                    account="现金",
+                )
+            )
+
+            dashboard = service.dashboard(now=datetime(2026, 6, 6, 12, 0, 0))
+            history = dashboard["assets"]["history"]
+            self.assertEqual(history[0]["date"], "2026-06-01")
+            self.assertEqual(history[0]["total"], 1000)
+            self.assertEqual(history[1]["total"], 900)
+            self.assertEqual(history[4]["total"], 1200)
+            self.assertEqual(history[-1]["date"], "2026-06-06")
 
     def test_edit_account_by_id_updates_existing_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

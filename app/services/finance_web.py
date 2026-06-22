@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any, Literal
 
 from app.services.ledger import EntryType, LedgerEntryDraft, LedgerService, _type_label
@@ -132,6 +132,8 @@ class FinanceWebService:
                         "opening_balance": float(row["opening_balance"]),
                     }
                 )
+            primary_currency = "CNY" if "CNY" in currency_totals else ("CNY" if not currency_totals else sorted(currency_totals)[0])
+            asset_history = _asset_history(conn=conn, start=start, end=end, currency=primary_currency, now=now)
 
         expense = float(totals["expense"])
         income = float(totals["income"])
@@ -197,6 +199,7 @@ class FinanceWebService:
                 "currency_count": len(currency_items),
                 "currencies": currency_items,
                 "accounts": account_items,
+                "history": asset_history,
             },
         }
 
@@ -587,6 +590,75 @@ def _account_balance(conn: Any, account_id: int, opening_balance: float) -> floa
         (account_id,),
     ).fetchone()
     return opening_balance + float(outgoing["total"]) + float(incoming_transfer["total"])
+
+
+def _asset_history(
+    *,
+    conn: Any,
+    start: datetime,
+    end: datetime,
+    currency: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    account_rows = conn.execute(
+        """
+        SELECT id, opening_balance
+        FROM ledger_accounts
+        WHERE status = 'active' AND currency = ?
+        ORDER BY id
+        """,
+        (currency,),
+    ).fetchall()
+    if not account_rows:
+        return []
+
+    account_ids = {int(row["id"]) for row in account_rows}
+    opening_total = sum(float(row["opening_balance"]) for row in account_rows)
+    rows = conn.execute(
+        """
+        SELECT occurred_at, entry_type, amount, account_id, transfer_to_account_id
+        FROM ledger_entries
+        WHERE currency = ? AND occurred_at >= ? AND occurred_at < ?
+        ORDER BY occurred_at ASC, id ASC
+        """,
+        (currency, start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")),
+    ).fetchall()
+
+    daily_deltas: dict[str, float] = {}
+    for row in rows:
+        day_key = str(row["occurred_at"])[:10]
+        delta = 0.0
+        entry_type = str(row["entry_type"])
+        amount = float(row["amount"])
+        account_id = int(row["account_id"]) if row["account_id"] is not None else None
+        target_id = int(row["transfer_to_account_id"]) if row["transfer_to_account_id"] is not None else None
+
+        if account_id in account_ids:
+            if entry_type in {"income", "refund", "reimbursement"}:
+                delta += amount
+            elif entry_type in {"expense", "transfer"}:
+                delta -= amount
+        if entry_type == "transfer" and target_id in account_ids:
+            delta += amount
+        if delta:
+            daily_deltas[day_key] = daily_deltas.get(day_key, 0.0) + delta
+
+    current_total = opening_total
+    history = []
+    cursor = start.date()
+    last_day = min(now.date(), (end - timedelta(days=1)).date())
+    while cursor <= last_day:
+        day_key = cursor.isoformat()
+        current_total += daily_deltas.get(day_key, 0.0)
+        history.append(
+            {
+                "date": day_key,
+                "label": cursor.strftime("%m/%d"),
+                "total": round(current_total, 2),
+            }
+        )
+        cursor += timedelta(days=1)
+    return history
 
 
 def _source_text(item: FinanceEntryInput, occurred_at: datetime) -> str:
