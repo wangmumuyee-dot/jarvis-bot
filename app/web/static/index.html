@@ -442,22 +442,27 @@
               <h2>最近流水</h2>
               <span class="soft-label" id="entryCountLabel">--</span>
             </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>类型</th>
-                    <th>分类</th>
-                    <th>备注</th>
-                    <th>账户</th>
-                    <th class="number-cell">金额</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="entriesBody"></tbody>
-              </table>
-            </div>
+            <form id="entryFilterForm" class="entry-filter-bar">
+              <div class="segmented entry-filter-segments" id="entryFilterSegments" role="tablist" aria-label="流水日期筛选">
+                <button class="segment" type="button" data-entry-range="today" aria-pressed="false">今天</button>
+                <button class="segment" type="button" data-entry-range="week" aria-pressed="false">本周</button>
+                <button class="segment active" type="button" data-entry-range="month" aria-pressed="true">本月</button>
+                <button class="segment" type="button" data-entry-range="custom" aria-pressed="false">自定义</button>
+              </div>
+              <div class="soft-label entry-filter-summary" id="entryFilterSummary">本月 · -- 条</div>
+              <div class="entry-filter-custom hidden" id="entryFilterCustom">
+                <label>
+                  <span>开始</span>
+                  <input type="date" name="start_date" id="entryFilterStart" />
+                </label>
+                <label>
+                  <span>结束</span>
+                  <input type="date" name="end_date" id="entryFilterEnd" />
+                </label>
+                <button class="secondary-button" type="submit">应用</button>
+              </div>
+            </form>
+            <div id="entriesBody" class="entry-card-list"></div>
           </div>
 
           <aside class="side-stack">

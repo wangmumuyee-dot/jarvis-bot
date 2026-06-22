@@ -275,10 +275,9 @@ class FinanceWebService:
         }
 
     def entries(self, limit: int = 30) -> list[dict[str, Any]]:
-        limit = max(1, min(limit, 100))
+        query_limit = None if limit <= 0 else max(1, min(limit, 2000))
         with self.db.connect() as conn:
-            rows = conn.execute(
-                """
+            sql = """
                 SELECT
                     ledger_entries.id,
                     ledger_entries.entry_type,
@@ -301,10 +300,11 @@ class FinanceWebService:
                 LEFT JOIN ledger_tags ON ledger_tags.id = ledger_entry_tags.tag_id
                 GROUP BY ledger_entries.id
                 ORDER BY ledger_entries.occurred_at DESC, ledger_entries.id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            """
+            if query_limit is None:
+                rows = conn.execute(sql).fetchall()
+            else:
+                rows = conn.execute(f"{sql}\nLIMIT ?", (query_limit,)).fetchall()
         return [
             {
                 "id": int(row["id"]),

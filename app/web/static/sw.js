@@ -1,4 +1,4 @@
-const CACHE_NAME = "jarvis-finance-shell-v6";
+const CACHE_NAME = "jarvis-finance-shell-v7";
 const APP_SHELL = [
   "/finance",
   "/finance-static/app.js",
@@ -49,7 +49,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (url.pathname.startsWith("/finance-static/")) {
-    event.respondWith(cacheFirst(event.request));
+    event.respondWith(networkFirst(event.request, event.request.url));
   }
 });
 

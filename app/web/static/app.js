@@ -14,6 +14,11 @@ const state = {
   entryComposerOpen: true,
   refreshing: false,
   pendingDeleteEntryId: null,
+  entryFilters: {
+    range: "month",
+    startDate: "",
+    endDate: "",
+  },
 };
 
 const quickCommands = [
@@ -60,6 +65,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const hashView = window.location.hash.replace(/^#/, "");
   setActiveView(viewTitles[hashView] ? hashView : localStorage.getItem(viewStorageKey) || "record");
   refreshAll();
+});
+
+window.addEventListener("hashchange", () => {
+  const hashView = window.location.hash.replace(/^#/, "");
+  if (viewTitles[hashView]) {
+    setActiveView(hashView);
+  }
 });
 
 if ("serviceWorker" in navigator) {
@@ -140,6 +152,10 @@ function bindEvents() {
   document.getElementById("cardToolForm").addEventListener("submit", submitCardTool);
   document.getElementById("periodToolForm").addEventListener("submit", submitPeriodTool);
   document.getElementById("searchToolForm").addEventListener("submit", submitSearchTool);
+  document.getElementById("entryFilterForm").addEventListener("submit", applyEntryFilters);
+  document.querySelectorAll("[data-entry-range]").forEach((button) => {
+    button.addEventListener("click", () => setEntryFilterRange(button.dataset.entryRange || "month"));
+  });
   document.getElementById("entriesBody").addEventListener("click", (event) => {
     const editButton = event.target.closest("[data-edit-entry-id]");
     if (editButton) {
@@ -222,6 +238,7 @@ function setToday() {
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const dd = String(today.getDate()).padStart(2, "0");
   document.getElementById("occurredAt").value = `${yyyy}-${mm}-${dd}`;
+  syncEntryFilterInputs();
 }
 
 async function refreshAll() {
@@ -234,14 +251,14 @@ async function refreshAll() {
     const [options, dashboard, entries] = await Promise.all([
       getJson("/api/finance/options"),
       getJson("/api/finance/dashboard"),
-      getJson("/api/finance/entries?limit=30"),
+      getJson("/api/finance/entries?limit=0"),
     ]);
     state.options = options;
     state.dashboard = dashboard;
     state.entries = entries.entries || [];
     renderOptions(options);
     renderDashboard(dashboard);
-    renderEntries(state.entries);
+    renderEntries(filteredEntries());
     setRefreshState("success");
   } catch (error) {
     showReply(`加载失败：${error.message}`);
@@ -774,30 +791,141 @@ function renderAssetHistory(items, currency) {
 
 function renderEntries(entries) {
   document.getElementById("entryCountLabel").textContent = `${entries.length} 条`;
+  renderEntryFilterSummary(entries.length);
   const body = document.getElementById("entriesBody");
   body.innerHTML = "";
   if (!entries.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty-state">暂无流水</td></tr>`;
+    body.innerHTML = `<div class="empty-state">暂无流水</div>`;
     return;
   }
   for (const entry of entries) {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td data-label="日期">${escapeHtml(datePart(entry.occurred_at))}</td>
-      <td data-label="类型"><span class="badge ${badgeClass(entry.entry_type)}">${escapeHtml(entry.entry_type_label)}</span></td>
-      <td data-label="分类">${escapeHtml(entry.category)}</td>
-      <td data-label="备注">${escapeHtml(entry.note)}${tagsHtml(entry.tags)}</td>
-      <td data-label="账户">${escapeHtml(entry.account || "")}</td>
-      <td class="number-cell" data-label="金额">${escapeHtml(money(entry.amount, entry.currency))}</td>
-      <td data-label="操作">
+    const card = document.createElement("article");
+    card.className = "entry-card";
+    card.innerHTML = `
+      <div class="entry-card-top">
+        <div class="entry-card-main">
+          <div class="entry-card-title">
+            <strong>${escapeHtml(entry.category)}</strong>
+            <span class="badge ${badgeClass(entry.entry_type)}">${escapeHtml(entry.entry_type_label)}</span>
+          </div>
+          <div class="entry-card-meta">
+            <span>${escapeHtml(datePart(entry.occurred_at))}</span>
+            <span>${escapeHtml(entry.account || "默认账户")}</span>
+          </div>
+        </div>
+        <b class="entry-card-amount">${escapeHtml(money(entry.amount, entry.currency))}</b>
+      </div>
+      <div class="entry-card-bottom">
+        <div class="entry-card-note">${escapeHtml(entry.note || "无备注")}${tagsHtml(entry.tags)}</div>
         <div class="table-actions">
           <button class="text-button table-action" type="button" data-edit-entry-id="${escapeAttr(entry.id)}">修改</button>
           <button class="text-button table-action danger-text" type="button" data-delete-entry-id="${escapeAttr(entry.id)}">删除</button>
         </div>
-      </td>
+      </div>
     `;
-    body.appendChild(row);
+    body.appendChild(card);
   }
+}
+
+function applyEntryFilters(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  state.entryFilters.range = "custom";
+  state.entryFilters.startDate = String(form.elements.start_date.value || "");
+  state.entryFilters.endDate = String(form.elements.end_date.value || "");
+  renderEntryFilterUi();
+  renderEntries(filteredEntries());
+  toast("已应用自定义筛选");
+}
+
+function filteredEntries() {
+  const { startDate, endDate } = resolvedEntryDateRange();
+  return state.entries.filter((entry) => {
+    const day = datePart(entry.occurred_at);
+    if (startDate && day < startDate) {
+      return false;
+    }
+    if (endDate && day > endDate) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function setEntryFilterRange(range) {
+  const nextRange = ["today", "week", "month", "custom"].includes(range) ? range : "month";
+  state.entryFilters.range = nextRange;
+  if (nextRange !== "custom") {
+    const { startDate, endDate } = quickEntryRange(nextRange);
+    state.entryFilters.startDate = startDate;
+    state.entryFilters.endDate = endDate;
+  }
+  renderEntryFilterUi();
+  syncEntryFilterInputs();
+  renderEntries(filteredEntries());
+  toast(`已切换到${entryRangeLabel(nextRange)}`);
+}
+
+function renderEntryFilterUi() {
+  document.querySelectorAll("[data-entry-range]").forEach((button) => {
+    const isActive = button.dataset.entryRange === state.entryFilters.range;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+  document.getElementById("entryFilterCustom").classList.toggle("hidden", state.entryFilters.range !== "custom");
+}
+
+function syncEntryFilterInputs() {
+  document.getElementById("entryFilterStart").value = state.entryFilters.startDate || "";
+  document.getElementById("entryFilterEnd").value = state.entryFilters.endDate || "";
+}
+
+function resolvedEntryDateRange() {
+  if (state.entryFilters.range === "custom") {
+    return {
+      startDate: state.entryFilters.startDate,
+      endDate: state.entryFilters.endDate,
+    };
+  }
+  return quickEntryRange(state.entryFilters.range);
+}
+
+function renderEntryFilterSummary(count) {
+  const node = document.getElementById("entryFilterSummary");
+  if (!node) {
+    return;
+  }
+  if (state.entryFilters.range === "custom") {
+    const start = state.entryFilters.startDate || "不限";
+    const end = state.entryFilters.endDate || "不限";
+    node.textContent = `自定义 ${start} - ${end} · ${count} 条`;
+    return;
+  }
+  node.textContent = `${entryRangeLabel(state.entryFilters.range)} · ${count} 条`;
+}
+
+function quickEntryRange(range) {
+  const today = new Date();
+  const todayText = formatDateInput(today);
+  if (range === "today") {
+    return { startDate: todayText, endDate: todayText };
+  }
+  if (range === "week") {
+    const start = new Date(today);
+    const day = start.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    start.setDate(start.getDate() - diff);
+    return { startDate: formatDateInput(start), endDate: todayText };
+  }
+  const start = new Date(today.getFullYear(), today.getMonth(), 1);
+  return { startDate: formatDateInput(start), endDate: todayText };
+}
+
+function entryRangeLabel(range) {
+  if (range === "today") return "今天";
+  if (range === "week") return "本周";
+  if (range === "custom") return "自定义";
+  return "本月";
 }
 
 function editEntry(entry) {
@@ -1264,6 +1392,13 @@ function splitTags(value) {
     .split(/[,，\s]+/)
     .map((item) => item.replace(/^#/, "").trim())
     .filter(Boolean);
+}
+
+function formatDateInput(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function validMonthDay(value) {
