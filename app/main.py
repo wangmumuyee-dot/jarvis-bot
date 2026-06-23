@@ -216,6 +216,42 @@ def finance_create_entry(
     return finance_web_service.create_entry(item)
 
 
+@app.put("/api/finance/entries/{entry_id}")
+def finance_update_entry(
+    entry_id: int,
+    payload: FinanceEntryRequest,
+    _access: None = Depends(_verify_finance_web_access),
+) -> dict[str, Any]:
+    item = FinanceEntryInput(
+        entry_type=payload.entry_type,  # type: ignore[arg-type]
+        amount=payload.amount,
+        currency=payload.currency,  # type: ignore[arg-type]
+        category=payload.category,
+        note=payload.note,
+        occurred_at=payload.occurred_at,
+        book=payload.book,
+        account=payload.account,
+        transfer_to_account=payload.transfer_to_account,
+        reimbursable=payload.reimbursable,
+        tags=tuple(payload.tags),
+    )
+    try:
+        return finance_web_service.update_entry(entry_id, item)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/api/finance/entries/{entry_id}")
+def finance_delete_entry(
+    entry_id: int,
+    _access: None = Depends(_verify_finance_web_access),
+) -> dict[str, str]:
+    try:
+        return finance_web_service.delete_entry(entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/finance/command")
 def finance_command(
     payload: FinanceCommandRequest,
